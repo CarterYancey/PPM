@@ -11,6 +11,155 @@ A minimalist, single-user task management system designed to manage multiple con
 - One place to see everything
 - Minimal required fields
 
+## Getting Started with the Webapp
+
+### Prerequisites
+- **Node.js** (v18 or higher) and npm
+
+### Installation & Launching
+
+1. **Clone and navigate to the project:**
+   ```bash
+   cd ppm-app
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Launch the development server:**
+   ```bash
+   npm run dev
+   ```
+   This will start the webapp on `http://localhost:5173` (or another port if 5173 is in use). The page will automatically refresh when you make changes.
+
+4. **Build for production (optional):**
+   ```bash
+   npm build
+   ```
+   This creates an optimized production build in the `dist/` directory.
+
+### Accessing the Webapp
+Once the dev server is running, open your browser and navigate to the local URL shown in the terminal (typically `http://localhost:5173`). The webapp will load with the "Today's List" tab active by default.
+
+### Core Tabs & Features
+
+#### 1. **Today's List** (Default Tab)
+Your main working view. Shows all tasks auto-sorted by urgency score.
+
+**How to use:**
+- Top task is always the most important thing to work on
+- Work through tasks top-to-bottom
+- Check the Done checkbox when you complete a task
+- Status indicators show task urgency:
+  - 🔴 **Red** = At risk (deadline approaching faster than you can complete)
+  - 🟡 **Yellow** = Tight (approaching deadline, needs attention soon)
+  - 🟢 **Green** = On track (deadline far enough away to be safe)
+  - ⚪ **White** = No deadline
+- View shows Hours, Due Date, Expected Finish Date, and Slack Days (days until due minus days needed)
+
+#### 2. **Goals** Tab
+Define what you're working toward and their relative importance.
+
+**How to use:**
+- Click **Add Goal** to create a new goal
+- Set a **Priority** using Fibonacci numbers (0, 1, 2, 3, 5, 8, 13, 21, 34...)
+  - 0 = Paused/someday
+  - 1-3 = Low priority
+  - 5-8 = Medium priority
+  - 13-21 = High priority
+  - 34+ = Critical/urgent
+- Add a **Target Date** (optional) for when you aim to complete the goal
+- Add **Notes** to capture why this goal matters
+- Goals are color-coded by priority level for quick visual reference
+
+#### 3. **Projects** Tab
+Group related tasks that support a goal.
+
+**How to use:**
+- Each project belongs to a single goal
+- Set a **Priority** relative to other projects in the same goal
+- Set a **Due Date** if the project has a hard deadline
+- View shows:
+  - Completion percentage (hours completed / total hours)
+  - Expected finish date (calculated from remaining hours)
+  - Status indicator (based on urgency)
+- Click **+Task** under a project to add tasks to it
+- Click a project to expand/collapse its tasks
+
+#### 4. **Settings** Tab
+Configure how the system calculates task urgency and finish dates.
+
+**How to use:**
+- **Daily Cadence** (default: 2 hours): How many hours per day you typically work on tasks
+  - Adjust this based on your actual work pace
+  - Used to calculate how many days a task will take
+  - Example: 2 hours of work with a 2-hour daily cadence = 1 day to complete
+
+### Quick Start Workflow
+
+**First time setup (5-10 minutes):**
+1. Go to **Goals** tab and create your first goal
+   - Name: Something meaningful (e.g., "Earn AWS certification")
+   - Priority: Start with 13 or 21 for important goals
+   - Target Date: Optional, but helpful for time-bound goals
+2. Go to **Projects** tab and create a project under your goal
+   - Name: Something specific (e.g., "AWS study plan")
+   - Priority: Relative to other projects in same goal
+3. Add tasks to your project
+   - Expand the project and click **+Task**
+   - For complex work, create subtasks (click **+Subtask**)
+   - Estimate hours for leaf tasks (use 1-2 hours for best results)
+   - Add due dates only for hard deadlines
+
+**Daily usage (2-3 minutes):**
+1. Open "Today's List" tab
+2. Look at the top task
+3. Work on it for the estimated hours
+4. Check Done when complete
+5. Move to the next top task
+6. Repeat!
+
+**Weekly review (10-15 minutes):**
+1. Go to **Goals** tab and review your priorities
+2. Go to **Projects** tab and check for at-risk items (🔴 red status)
+3. Add new tasks for upcoming milestones
+4. Update time estimates if your pace has changed
+5. Adjust due dates if requirements change
+
+### Data Persistence
+
+All your data is automatically saved to **browser local storage**. Your goals, projects, and tasks persist even after closing the browser, as long as you use the same browser on the same computer.
+
+**To back up your data:**
+- Export functionality is planned for future releases
+- For now, keep the browser's local storage safe (clearing cache will delete data)
+
+### Key Features & Recent Improvements
+
+**Status Indicators**
+- Visual indicators (🔴 🟡 🟢 ⚪) show task urgency at a glance
+- Based on the automatic prioritization algorithm
+- Helps identify at-risk work before deadlines are missed
+
+**Expected Finish Dates**
+- Tasks and projects automatically calculate expected completion dates
+- Based on remaining hours and your daily cadence setting
+- Shows on Projects page so you can see cumulative finish dates for milestones
+
+**Hierarchical Tasks**
+- Break complex work into subtasks for better organization
+- Parent tasks auto-collapse by default (click to expand)
+- Subtasks inherit due dates from parents when applicable
+
+**Integrated Project/Task View**
+- Tasks are grouped directly under their projects
+- No separate Tasks tab - everything visible in Projects tab
+- Click **+Task** to add tasks, **+Subtask** for nested work
+
+---
+
 ## Problem Statement
 
 Traditional project management tools fail individual users in several ways:
