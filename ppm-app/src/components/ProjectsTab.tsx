@@ -346,8 +346,23 @@ export default function ProjectsTab() {
 
   const getProjectCompletionStats = (projectId: string) => {
     const projectTasks = tasks.filter((t) => t.projectId === projectId);
-    const completed = projectTasks.filter((t) => t.done).length;
-    return { total: projectTasks.length, completed };
+
+    // Only count leaf tasks (tasks without children)
+    const leafTasks = projectTasks.filter((t) => isLeaf(t.id, tasks));
+
+    // Calculate based on hours, not task count
+    const totalHours = leafTasks.reduce((sum, t) => sum + (t.estHours || 0), 0);
+    const completedHours = leafTasks
+      .filter((t) => t.done)
+      .reduce((sum, t) => sum + (t.estHours || 0), 0);
+
+    return {
+      totalTasks: leafTasks.length,
+      completedTasks: leafTasks.filter((t) => t.done).length,
+      totalHours,
+      completedHours,
+      percentage: totalHours > 0 ? Math.round((completedHours / totalHours) * 100) : 0
+    };
   };
 
   return (
@@ -451,7 +466,6 @@ export default function ProjectsTab() {
             <div className="space-y-4">
               {goalProjects.map((project) => {
                 const stats = getProjectCompletionStats(project.id);
-                const completionPercentage = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
                 const projectTasks = tasks.filter((t) => t.projectId === project.id);
                 const taskTree = buildTaskTree(projectTasks);
                 const isAddingTaskToThisProject = addingTaskFor?.projectId === project.id && !addingTaskFor.parentTaskId;
@@ -475,17 +489,22 @@ export default function ProjectsTab() {
                               </span>
                             )}
                             <span>
-                              <span className="font-medium">Tasks:</span> {stats.completed}/{stats.total}
+                              <span className="font-medium">Tasks:</span> {stats.completedTasks}/{stats.totalTasks}
                             </span>
-                            {stats.total > 0 && (
+                            {stats.totalHours > 0 && (
                               <span>
-                                <span className="font-medium">Progress:</span> {completionPercentage}%
+                                <span className="font-medium">Hours:</span> {stats.completedHours}/{stats.totalHours}
+                              </span>
+                            )}
+                            {stats.totalHours > 0 && (
+                              <span>
+                                <span className="font-medium">Progress:</span> {stats.percentage}%
                               </span>
                             )}
                           </div>
-                          {stats.total > 0 && (
+                          {stats.totalHours > 0 && (
                             <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
-                              <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${completionPercentage}%` }} />
+                              <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${stats.percentage}%` }} />
                             </div>
                           )}
                         </div>

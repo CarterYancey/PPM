@@ -18,9 +18,32 @@ export default function TodaysListTab() {
     // Update cumulative date for next task
     cumulativeDate = finishDate;
 
+    // Recalculate status indicator based on cumulative finish date
+    let statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = item.statusIndicator;
+    let actualSlack = item.slack;
+
+    if (item.task.dueDate) {
+      const dueDate = new Date(item.task.dueDate);
+      const daysUntilDue = Math.floor((dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+      const daysUntilFinish = Math.floor((finishDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+      actualSlack = daysUntilDue - daysUntilFinish;
+
+      if (actualSlack < 0) {
+        statusIndicator = '🔴'; // At risk - will finish after due date
+      } else if (actualSlack <= 2) {
+        statusIndicator = '🟡'; // Tight - 2 days or less slack
+      } else {
+        statusIndicator = '🟢'; // On track
+      }
+    } else {
+      statusIndicator = '⚪'; // No deadline
+    }
+
     return {
       ...item,
       cumulativeFinishDate: finishDate,
+      statusIndicator,
+      slack: actualSlack,
     };
   });
 

@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import GoalsTab from './components/GoalsTab';
 import ProjectsTab from './components/ProjectsTab';
-import TasksTab from './components/TasksTab';
 import TodaysListTab from './components/TodaysListTab';
 import SettingsTab from './components/SettingsTab';
 
-type Tab = 'today' | 'goals' | 'projects' | 'tasks' | 'settings';
+type Tab = 'today' | 'goals' | 'projects' | 'settings';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('today');
@@ -14,7 +13,6 @@ function App() {
     { id: 'today', label: "Today's List" },
     { id: 'goals', label: 'Goals' },
     { id: 'projects', label: 'Projects' },
-    { id: 'tasks', label: 'Tasks' },
     { id: 'settings', label: 'Settings' },
   ];
 
@@ -57,7 +55,6 @@ function App() {
           {activeTab === 'today' && <TodaysListTab />}
           {activeTab === 'goals' && <GoalsTab />}
           {activeTab === 'projects' && <ProjectsTab />}
-          {activeTab === 'tasks' && <TasksTab />}
           {activeTab === 'settings' && <SettingsTab />}
         </div>
       </div>
