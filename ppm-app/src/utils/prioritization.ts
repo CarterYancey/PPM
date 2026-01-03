@@ -97,8 +97,9 @@ export function calculateSlack(
 /**
  * Get effective due date for a task
  * If task has a due date, return it. Otherwise, check parent task.
+ * For root-level tasks, inherit from the project's due date if available.
  */
-export function getEffectiveDueDate(task: Task, allTasks: Task[]): string | undefined {
+export function getEffectiveDueDate(task: Task, allTasks: Task[], projects: Project[]): string | undefined {
   if (task.dueDate) {
     return task.dueDate;
   }
@@ -107,8 +108,14 @@ export function getEffectiveDueDate(task: Task, allTasks: Task[]): string | unde
   if (task.parentTaskId) {
     const parent = allTasks.find((t) => t.id === task.parentTaskId);
     if (parent) {
-      return getEffectiveDueDate(parent, allTasks); // Recursive check
+      return getEffectiveDueDate(parent, allTasks, projects); // Recursive check
     }
+  }
+
+  // For root-level tasks, check the project's due date
+  const project = projects.find((p) => p.id === task.projectId);
+  if (project?.dueDate) {
+    return project.dueDate;
   }
 
   return undefined;
@@ -123,12 +130,13 @@ export function getEffectiveDueDate(task: Task, allTasks: Task[]): string | unde
 export function calculateUrgencyBoost(
   task: Task,
   allTasks: Task[],
+  projects: Project[],
   hoursRemaining: number,
   dailyCadence: number,
   calculationsMap: Map<string, TaskCalculations>
 ): number {
-  // Get effective due date (task's own or inherited from parent)
-  const effectiveDueDate = getEffectiveDueDate(task, allTasks);
+  // Get effective due date (task's own or inherited from parent or project)
+  const effectiveDueDate = getEffectiveDueDate(task, allTasks, projects);
 
   // If task has a due date (own or inherited), calculate urgency based on slack
   if (effectiveDueDate) {
@@ -172,17 +180,18 @@ export function calculateTaskMetrics(
   goal: Goal,
   project: Project,
   allTasks: Task[],
+  projects: Project[],
   dailyCadence: number,
   calculationsMap: Map<string, TaskCalculations>
 ): TaskCalculations {
   const taskIsLeaf = isLeaf(task.id, allTasks);
   const hoursRemaining = calculateTotalHoursRemaining(task, allTasks);
   const basePriority = calculateBasePriority(goal, project);
-  const urgencyBoost = calculateUrgencyBoost(task, allTasks, hoursRemaining, dailyCadence, calculationsMap);
+  const urgencyBoost = calculateUrgencyBoost(task, allTasks, projects, hoursRemaining, dailyCadence, calculationsMap);
   const urgencyScore = basePriority + urgencyBoost;
 
-  // Use effective due date (inherited from parent if needed)
-  const effectiveDueDate = getEffectiveDueDate(task, allTasks);
+  // Use effective due date (inherited from parent or project if needed)
+  const effectiveDueDate = getEffectiveDueDate(task, allTasks, projects);
   const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
   const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
 
@@ -247,6 +256,7 @@ export function calculateAllTaskMetrics(
         goal,
         project,
         tasks,
+        projects,
         dailyCadence,
         calculationsMap
       );
@@ -298,8 +308,8 @@ export function generateTodaysList(
     // Get parent task name if exists
     const parent = task.parentTaskId ? tasks.find((t) => t.id === task.parentTaskId) : undefined;
 
-    // Get effective due date (task's own or inherited from parent)
-    const effectiveDueDate = getEffectiveDueDate(task, tasks);
+    // Get effective due date (task's own or inherited from parent or project)
+    const effectiveDueDate = getEffectiveDueDate(task, tasks, projects);
 
     return {
       task: { ...task, dueDate: effectiveDueDate }, // Use effective due date for display

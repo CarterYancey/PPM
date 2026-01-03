@@ -48,8 +48,8 @@ export function calculateTaskScheduling(
     // Update cumulative date for next task
     cumulativeDate = finishDate;
 
-    // Get effective due date (task's own or inherited from parent)
-    const effectiveDueDate = getEffectiveDueDate(item.task, tasks);
+    // Get effective due date (task's own or inherited from parent or project)
+    const effectiveDueDate = getEffectiveDueDate(item.task, tasks, projects);
 
     // Calculate status based on cumulative finish date vs due date
     const { statusIndicator, slack } = calculateStatusFromDates(
@@ -74,7 +74,7 @@ export function calculateTaskScheduling(
   completedLeafTasks.forEach(task => {
     if (!scheduleMap.has(task.id)) {
       const today = new Date();
-      const effectiveDueDate = getEffectiveDueDate(task, tasks);
+      const effectiveDueDate = getEffectiveDueDate(task, tasks, projects);
       scheduleMap.set(task.id, {
         taskId: task.id,
         startDate: today,
@@ -90,7 +90,7 @@ export function calculateTaskScheduling(
 
   // Calculate finish dates for parent tasks (Groups)
   // A parent's finish date is the max finish date of all its leaf descendants
-  calculateParentTaskSchedules(tasks, scheduleMap);
+  calculateParentTaskSchedules(tasks, projects, scheduleMap);
 
   return scheduleMap;
 }
@@ -130,6 +130,7 @@ function calculateStatusFromDates(
  */
 function calculateParentTaskSchedules(
   tasks: Task[],
+  projects: Project[],
   scheduleMap: Map<string, TaskScheduleData>
 ): void {
   // Helper to get all leaf descendants of a task
@@ -173,7 +174,7 @@ function calculateParentTaskSchedules(
     const hoursRemaining = descendantSchedules.reduce((sum, s) => sum + s.hoursRemaining, 0);
 
     // Get parent's effective due date
-    const effectiveDueDate = getEffectiveDueDate(parent, tasks);
+    const effectiveDueDate = getEffectiveDueDate(parent, tasks, projects);
 
     // Calculate status based on max finish date vs due date
     const { statusIndicator, slack } = calculateStatusFromDates(
