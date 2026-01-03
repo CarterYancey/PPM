@@ -14,13 +14,52 @@ export default function SettingsTab() {
     tasks,
   } = useStore();
 
+  const defaultWorkDays = settings.workDays?.length ? settings.workDays : [0, 1, 2, 3, 4, 5, 6];
   const [dailyCadence, setDailyCadence] = useState(settings.dailyCadence);
+  const [workDays, setWorkDays] = useState(defaultWorkDays);
+  const [vacationDates, setVacationDates] = useState(settings.vacationDates ?? []);
+  const [newVacationDate, setNewVacationDate] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveSettings = () => {
-    updateSettings({ dailyCadence });
+    updateSettings({
+      dailyCadence,
+      workDays,
+      vacationDates,
+    });
+  };
+
+  const dayOptions = [
+    { label: 'Sun', value: 0 },
+    { label: 'Mon', value: 1 },
+    { label: 'Tue', value: 2 },
+    { label: 'Wed', value: 3 },
+    { label: 'Thu', value: 4 },
+    { label: 'Fri', value: 5 },
+    { label: 'Sat', value: 6 },
+  ];
+
+  const toggleWorkDay = (dayValue: number) => {
+    setWorkDays((prev) => (
+      prev.includes(dayValue)
+        ? prev.filter((day) => day !== dayValue)
+        : [...prev, dayValue].sort((a, b) => a - b)
+    ));
+  };
+
+  const handleAddVacationDate = () => {
+    if (!newVacationDate || vacationDates.includes(newVacationDate)) {
+      return;
+    }
+
+    setVacationDates((prev) => [...prev, newVacationDate].sort());
+    setNewVacationDate('');
+  };
+
+  const handleRemoveVacationDate = (date: string) => {
+    setVacationDates((prev) => prev.filter((entry) => entry !== date));
   };
 
   const handleLoadSampleData = () => {
@@ -115,6 +154,81 @@ export default function SettingsTab() {
               Save
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Work Schedule */}
+      <div className="bg-white border rounded-lg p-6 space-y-6">
+        <div>
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Work Schedule</h3>
+          <p className="text-sm text-gray-600">
+            Choose which days you typically work. Vacation days are excluded from scheduling.
+          </p>
+        </div>
+
+        <div>
+          <h4 className="text-sm font-medium text-gray-900 mb-3">Work Days</h4>
+          <div className="flex flex-wrap gap-4">
+            {dayOptions.map((day) => (
+              <label key={day.value} className="flex items-center space-x-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={workDays.includes(day.value)}
+                  onChange={() => toggleWorkDay(day.value)}
+                  className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span>{day.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-sm font-medium text-gray-900 mb-3">Vacation Days</h4>
+          <div className="flex flex-col gap-4 max-w-md">
+            <div className="flex items-center gap-3">
+              <input
+                type="date"
+                value={newVacationDate}
+                onChange={(e) => setNewVacationDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleAddVacationDate}
+                className="px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                Add
+              </button>
+            </div>
+            {vacationDates.length > 0 ? (
+              <ul className="space-y-2">
+                {vacationDates.map((date) => (
+                  <li key={date} className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm">
+                    <span className="text-gray-700">{date}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveVacationDate(date)}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-gray-500">No vacation days added yet.</p>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <button
+            onClick={handleSaveSettings}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Save Settings
+          </button>
         </div>
       </div>
 
