@@ -5,7 +5,7 @@ import { format, addDays } from 'date-fns';
 export default function TodaysListTab() {
   const { goals, projects, tasks, settings, toggleTaskDone } = useStore();
 
-  const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
+  const todaysList = generateTodaysList(tasks, goals, projects, settings);
 
   // Calculate cumulative finish dates
   // Each task finishes after the previous task plus its own hours

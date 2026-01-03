@@ -1,5 +1,5 @@
-import { differenceInDays, addDays, parseISO, formatISO } from 'date-fns';
-import type { Task, Goal, Project, TaskCalculations, TodayListItem } from '../types';
+import { addDays, parseISO, formatISO } from 'date-fns';
+import type { Task, Goal, Project, TaskCalculations, TodayListItem, Settings } from '../types';
 import { isLeaf, getChildren, getLeafDescendants } from './taskTree';
 
 /**
@@ -55,11 +55,75 @@ export function calculateBasePriority(goal: Goal, project: Project): number {
   return (goal.priority + project.priority) * 10;
 }
 
+export function isWorkingDay(
+  date: Date,
+  workDays: number[],
+  vacationDates: string[]
+): boolean {
+  const dayOfWeek = date.getDay();
+  if (!workDays.includes(dayOfWeek)) return false;
+
+  const dateKey = formatISO(date, { representation: 'date' });
+  return !vacationDates.includes(dateKey);
+}
+
+export function advanceWorkingDays(
+  startDate: Date,
+  daysToAdvance: number,
+  workDays: number[],
+  vacationDates: string[]
+): Date {
+  if (daysToAdvance <= 0) return startDate;
+
+  let currentDate = startDate;
+  let remainingDays = daysToAdvance;
+
+  while (remainingDays > 0) {
+    currentDate = addDays(currentDate, 1);
+    if (isWorkingDay(currentDate, workDays, vacationDates)) {
+      remainingDays -= 1;
+    }
+  }
+
+  return currentDate;
+}
+
+export function countWorkingDaysBetween(
+  startDate: Date,
+  endDate: Date,
+  workDays: number[],
+  vacationDates: string[]
+): number {
+  if (startDate.getTime() === endDate.getTime()) return 0;
+
+  const step = endDate.getTime() > startDate.getTime() ? 1 : -1;
+  let currentDate = addDays(startDate, step);
+  let count = 0;
+
+  while (
+    (step > 0 && currentDate.getTime() <= endDate.getTime()) ||
+    (step < 0 && currentDate.getTime() >= endDate.getTime())
+  ) {
+    if (isWorkingDay(currentDate, workDays, vacationDates)) {
+      count += step;
+    }
+    currentDate = addDays(currentDate, step);
+  }
+
+  return count;
+}
+
 /**
  * Calculate days needed to complete a task based on hours and daily cadence
  */
-export function calculateDaysNeeded(hoursRemaining: number, dailyCadence: number): number {
-  if (dailyCadence === 0) return 0;
+export function calculateDaysNeeded(
+  hoursRemaining: number,
+  dailyCadence: number,
+  workDays: number[],
+  vacationDates: string[]
+): number {
+  void vacationDates;
+  if (dailyCadence === 0 || workDays.length === 0) return 0;
   return Math.ceil(hoursRemaining / dailyCadence);
 }
 
@@ -68,10 +132,22 @@ export function calculateDaysNeeded(hoursRemaining: number, dailyCadence: number
  */
 export function calculateExpectedCompletion(
   hoursRemaining: number,
-  dailyCadence: number
+  dailyCadence: number,
+  workDays: number[],
+  vacationDates: string[]
 ): string {
-  const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
-  const completionDate = addDays(new Date(), daysNeeded);
+  const daysNeeded = calculateDaysNeeded(
+    hoursRemaining,
+    dailyCadence,
+    workDays,
+    vacationDates
+  );
+  const completionDate = advanceWorkingDays(
+    new Date(),
+    daysNeeded,
+    workDays,
+    vacationDates
+  );
   return formatISO(completionDate, { representation: 'date' });
 }
 
@@ -82,14 +158,21 @@ export function calculateExpectedCompletion(
 export function calculateSlack(
   dueDate: string | undefined,
   hoursRemaining: number,
-  dailyCadence: number
+  dailyCadence: number,
+  workDays: number[],
+  vacationDates: string[]
 ): number | undefined {
   if (!dueDate) return undefined;
 
   const today = new Date();
   const due = parseISO(dueDate);
-  const daysUntilDue = differenceInDays(due, today);
-  const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
+  const daysUntilDue = countWorkingDaysBetween(today, due, workDays, vacationDates);
+  const daysNeeded = calculateDaysNeeded(
+    hoursRemaining,
+    dailyCadence,
+    workDays,
+    vacationDates
+  );
 
   return daysUntilDue - daysNeeded;
 }
@@ -124,7 +207,7 @@ export function calculateUrgencyBoost(
   task: Task,
   allTasks: Task[],
   hoursRemaining: number,
-  dailyCadence: number,
+  settings: Settings,
   calculationsMap: Map<string, TaskCalculations>
 ): number {
   // Get effective due date (task's own or inherited from parent)
@@ -132,7 +215,13 @@ export function calculateUrgencyBoost(
 
   // If task has a due date (own or inherited), calculate urgency based on slack
   if (effectiveDueDate) {
-    const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
+    const slack = calculateSlack(
+      effectiveDueDate,
+      hoursRemaining,
+      settings.dailyCadence,
+      settings.workDays,
+      settings.vacationDates
+    );
     if (slack === undefined) return 0;
 
     if (slack < 0) {
@@ -172,19 +261,30 @@ export function calculateTaskMetrics(
   goal: Goal,
   project: Project,
   allTasks: Task[],
-  dailyCadence: number,
+  settings: Settings,
   calculationsMap: Map<string, TaskCalculations>
 ): TaskCalculations {
   const taskIsLeaf = isLeaf(task.id, allTasks);
   const hoursRemaining = calculateTotalHoursRemaining(task, allTasks);
   const basePriority = calculateBasePriority(goal, project);
-  const urgencyBoost = calculateUrgencyBoost(task, allTasks, hoursRemaining, dailyCadence, calculationsMap);
+  const urgencyBoost = calculateUrgencyBoost(task, allTasks, hoursRemaining, settings, calculationsMap);
   const urgencyScore = basePriority + urgencyBoost;
 
   // Use effective due date (inherited from parent if needed)
   const effectiveDueDate = getEffectiveDueDate(task, allTasks);
-  const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
-  const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
+  const daysNeeded = calculateDaysNeeded(
+    hoursRemaining,
+    settings.dailyCadence,
+    settings.workDays,
+    settings.vacationDates
+  );
+  const slack = calculateSlack(
+    effectiveDueDate,
+    hoursRemaining,
+    settings.dailyCadence,
+    settings.workDays,
+    settings.vacationDates
+  );
 
   let level = 0;
   let currentTask = task;
@@ -201,10 +301,20 @@ export function calculateTaskMetrics(
     totalHoursRemaining: hoursRemaining,
     completionPercentage: calculateCompletionPercentage(task, allTasks),
     expectedCompletionDate: hoursRemaining > 0
-      ? calculateExpectedCompletion(hoursRemaining, dailyCadence)
+      ? calculateExpectedCompletion(
+        hoursRemaining,
+        settings.dailyCadence,
+        settings.workDays,
+        settings.vacationDates
+      )
       : undefined,
     daysUntilDue: effectiveDueDate
-      ? differenceInDays(parseISO(effectiveDueDate), new Date())
+      ? countWorkingDaysBetween(
+        new Date(),
+        parseISO(effectiveDueDate),
+        settings.workDays,
+        settings.vacationDates
+      )
       : undefined,
     daysNeeded,
     slack,
@@ -222,7 +332,7 @@ export function calculateAllTaskMetrics(
   tasks: Task[],
   goals: Goal[],
   projects: Project[],
-  dailyCadence: number
+  settings: Settings
 ): Map<string, TaskCalculations> {
   const calculationsMap = new Map<string, TaskCalculations>();
 
@@ -247,7 +357,7 @@ export function calculateAllTaskMetrics(
         goal,
         project,
         tasks,
-        dailyCadence,
+        settings,
         calculationsMap
       );
       calculationsMap.set(task.id, calculations);
@@ -283,9 +393,9 @@ export function generateTodaysList(
   tasks: Task[],
   goals: Goal[],
   projects: Project[],
-  dailyCadence: number
+  settings: Settings
 ): TodayListItem[] {
-  const calculationsMap = calculateAllTaskMetrics(tasks, goals, projects, dailyCadence);
+  const calculationsMap = calculateAllTaskMetrics(tasks, goals, projects, settings);
 
   // Get only leaf tasks that are not done
   const leafTasks = tasks.filter((t) => isLeaf(t.id, tasks) && !t.done);

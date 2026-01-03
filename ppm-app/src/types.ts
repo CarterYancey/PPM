@@ -27,6 +27,8 @@ export interface Task {
 
 export interface Settings {
   dailyCadence: number; // Hours per day user works on tasks (default: 2)
+  workDays: number[]; // Days of week the user works (0=Sun ... 6=Sat)
+  vacationDates: string[]; // ISO date strings for non-working vacation days
 }
 
 // Calculated/derived fields for tasks

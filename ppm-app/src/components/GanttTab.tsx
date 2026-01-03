@@ -44,7 +44,7 @@ export default function GanttTab() {
           .slice()
           .sort((a, b) => b.priority - a.priority)
       );
-    const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
+    const todaysList = generateTodaysList(tasks, goals, projects, settings);
     const scheduleMap = new Map<string, ScheduledTask[]>();
     let cursor = timelineStart;
 
