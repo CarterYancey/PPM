@@ -1,15 +1,55 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import type { Project, Task } from '../types';
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { buildTaskTree, type TaskNode, isLeaf } from '../utils/taskTree';
-import { getEffectiveDueDate, calculateSlack, getStatusIndicator, calculateTotalHoursRemaining, calculateExpectedCompletion } from '../utils/prioritization';
+import { generateTodaysList } from '../utils/prioritization';
 
 export default function ProjectsTab() {
   const { goals, projects, tasks, settings, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, toggleTaskDone } = useStore();
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+
+  // Generate today's list with cumulative finish dates (same logic as TodaysListTab)
+  const taskFinishData = useMemo(() => {
+    const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
+
+    // Calculate cumulative finish dates
+    let cumulativeDate = new Date();
+    const finishMap = new Map<string, { finishDate: Date; statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' }>();
+
+    todaysList.forEach((item) => {
+      const hoursForThisTask = item.task.estHours || 0;
+      const daysForThisTask = Math.ceil(hoursForThisTask / settings.dailyCadence);
+      const finishDate = addDays(cumulativeDate, daysForThisTask);
+      cumulativeDate = finishDate;
+
+      // Recalculate status indicator based on cumulative finish date
+      let statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = item.statusIndicator;
+
+      if (item.task.dueDate) {
+        const dueDate = new Date(item.task.dueDate);
+        const daysUntilDue = Math.floor((dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+        const daysUntilFinish = Math.floor((finishDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+        const actualSlack = daysUntilDue - daysUntilFinish;
+
+        if (actualSlack < 0) {
+          statusIndicator = '🔴'; // At risk
+        } else if (actualSlack <= 2) {
+          statusIndicator = '🟡'; // Tight
+        } else {
+          statusIndicator = '🟢'; // On track
+        }
+      } else {
+        statusIndicator = '⚪'; // No deadline
+      }
+
+      finishMap.set(item.task.id, { finishDate, statusIndicator });
+    });
+
+    return finishMap;
+  }, [tasks, goals, projects, settings.dailyCadence]);
 
   // Initialize collapsed nodes to include all parent tasks (tasks with children) by default
   useEffect(() => {
@@ -139,26 +179,19 @@ export default function ProjectsTab() {
     const taskIsLeaf = isLeaf(node.id, tasks);
     const isEditing = editingTaskId === node.id;
 
-    // Calculate status indicator and expected finish date
-    const effectiveDueDate = getEffectiveDueDate(node, tasks);
-    const hoursRemaining = calculateTotalHoursRemaining(node, tasks);
-    const slack = calculateSlack(effectiveDueDate, hoursRemaining, settings.dailyCadence);
+    // Get finish data from cumulative calculation (same as Today's List)
+    const finishData = taskFinishData.get(node.id);
+    const statusIndicator = finishData?.statusIndicator || '⚪';
+    const expectedFinishDate = finishData?.finishDate;
 
-    // Calculate urgency boost properly
-    let urgencyBoost = 0;
-    if (slack !== undefined) {
-      if (slack < 0) {
-        urgencyBoost = 1000; // At risk
-      } else {
-        urgencyBoost = 100 / (1 + slack);
+    // Get effective due date for display
+    const effectiveDueDate = node.dueDate || (() => {
+      if (node.parentTaskId) {
+        const parent = tasks.find(t => t.id === node.parentTaskId);
+        if (parent?.dueDate) return parent.dueDate;
       }
-    }
-    const statusIndicator = getStatusIndicator(urgencyBoost, slack);
-
-    // Calculate expected finish date
-    const expectedFinishDate = hoursRemaining > 0
-      ? calculateExpectedCompletion(hoursRemaining, settings.dailyCadence)
-      : undefined;
+      return undefined;
+    })();
 
     if (isEditing) {
       return (
@@ -259,7 +292,7 @@ export default function ProjectsTab() {
               <span>#{node.sortOrder}</span>
               {node.estHours && <span>{node.estHours}h</span>}
               {effectiveDueDate && <span>Due: {format(new Date(effectiveDueDate), 'MMM d')}</span>}
-              {expectedFinishDate && <span>Finish: {format(new Date(expectedFinishDate), 'MMM d')}</span>}
+              {expectedFinishDate && <span>Finish: {format(expectedFinishDate, 'MMM d')}</span>}
             </div>
           </div>
 
