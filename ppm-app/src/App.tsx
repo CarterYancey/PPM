@@ -2,9 +2,10 @@ import { useState } from 'react';
 import GoalsTab from './components/GoalsTab';
 import ProjectsTab from './components/ProjectsTab';
 import TodaysListTab from './components/TodaysListTab';
+import GanttChartTab from './components/GanttChartTab';
 import SettingsTab from './components/SettingsTab';
 
-type Tab = 'today' | 'goals' | 'projects' | 'settings';
+type Tab = 'today' | 'goals' | 'projects' | 'gantt' | 'settings';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('today');
@@ -13,6 +14,7 @@ function App() {
     { id: 'today', label: "Today's List" },
     { id: 'goals', label: 'Goals' },
     { id: 'projects', label: 'Projects' },
+    { id: 'gantt', label: 'Gantt Chart' },
     { id: 'settings', label: 'Settings' },
   ];
 
@@ -55,6 +57,7 @@ function App() {
           {activeTab === 'today' && <TodaysListTab />}
           {activeTab === 'goals' && <GoalsTab />}
           {activeTab === 'projects' && <ProjectsTab />}
+          {activeTab === 'gantt' && <GanttChartTab />}
           {activeTab === 'settings' && <SettingsTab />}
         </div>
       </div>
