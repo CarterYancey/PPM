@@ -122,6 +122,28 @@ export function getEffectiveDueDate(task: Task, allTasks: Task[], projects: Proj
 }
 
 /**
+ * Calculate the latest start date for a task (when it MUST begin to meet its deadline)
+ * Returns: number of days from today (can be negative if already late)
+ * Returns undefined if no due date
+ */
+export function calculateLatestStartDate(
+  dueDate: string | undefined,
+  hoursRemaining: number,
+  dailyCadence: number
+): number | undefined {
+  if (!dueDate) return undefined;
+
+  const today = new Date();
+  const due = parseISO(dueDate);
+  const daysUntilDue = differenceInDays(due, today);
+  const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
+
+  // Latest start date = days until due - days needed
+  // If negative, we're already past the latest start date
+  return daysUntilDue - daysNeeded;
+}
+
+/**
  * Calculate urgency boost based on deadline
  * - If slack < 0: boost = 1000 (at risk!)
  * - Otherwise: boost = 100 / (1 + slack)
@@ -194,6 +216,7 @@ export function calculateTaskMetrics(
   const effectiveDueDate = getEffectiveDueDate(task, allTasks, projects);
   const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
   const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
+  const latestStartDate = calculateLatestStartDate(effectiveDueDate, hoursRemaining, dailyCadence);
 
   let level = 0;
   let currentTask = task;
@@ -217,6 +240,7 @@ export function calculateTaskMetrics(
       : undefined,
     daysNeeded,
     slack,
+    latestStartDate,
     urgencyScore,
     basePriority,
     urgencyBoost,
@@ -317,18 +341,48 @@ export function generateTodaysList(
       projectName: project.name,
       goalName: goal.name,
       urgencyScore: calculations.urgencyScore,
+      basePriority: calculations.basePriority,
+      latestStartDate: calculations.latestStartDate,
       statusIndicator: getStatusIndicator(calculations.urgencyBoost, calculations.slack),
       slack: calculations.slack,
       expectedCompletion: calculations.expectedCompletionDate,
     };
   });
 
-  // Sort by urgency score (descending), then by sort order (ascending)
+  // Sort by latestStartDate ascending (tasks that MUST start sooner come first)
+  // Tasks without due dates (undefined latestStartDate) go LAST
+  // Secondary sort by basePriority descending (higher priority wins ties)
+  // This ensures:
+  // 1. Tasks are completed by their due dates when possible
+  // 2. High priority tasks only preempt lower priority tasks when NECESSARY
+  //    (i.e., when they have the same or earlier latestStartDate)
   todaysList.sort((a, b) => {
-    if (a.urgencyScore !== b.urgencyScore) {
-      return b.urgencyScore - a.urgencyScore; // Higher score first
+    // Handle undefined latestStartDate (no deadline) - these go last
+    const aHasDeadline = a.latestStartDate !== undefined;
+    const bHasDeadline = b.latestStartDate !== undefined;
+
+    if (aHasDeadline && !bHasDeadline) return -1; // a has deadline, b doesn't -> a first
+    if (!aHasDeadline && bHasDeadline) return 1;  // b has deadline, a doesn't -> b first
+    if (!aHasDeadline && !bHasDeadline) {
+      // Both have no deadline - sort by priority (higher first)
+      if (a.basePriority !== b.basePriority) {
+        return b.basePriority - a.basePriority;
+      }
+      return a.task.sortOrder - b.task.sortOrder;
     }
-    return a.task.sortOrder - b.task.sortOrder; // Lower sort order first
+
+    // Both have deadlines - sort by latestStartDate (earlier first)
+    if (a.latestStartDate !== b.latestStartDate) {
+      return a.latestStartDate! - b.latestStartDate!; // Earlier (smaller) first
+    }
+
+    // Same latestStartDate - higher priority wins
+    if (a.basePriority !== b.basePriority) {
+      return b.basePriority - a.basePriority;
+    }
+
+    // Same priority - use sort order
+    return a.task.sortOrder - b.task.sortOrder;
   });
 
   return todaysList;
