@@ -1,14 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import type { Project, Task } from '../types';
 import { format } from 'date-fns';
 import { buildTaskTree, type TaskNode, isLeaf } from '../utils/taskTree';
+import { getEffectiveDueDate, calculateSlack, getStatusIndicator, calculateTotalHoursRemaining } from '../utils/prioritization';
 
 export default function ProjectsTab() {
-  const { goals, projects, tasks, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, toggleTaskDone } = useStore();
+  const { goals, projects, tasks, settings, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, toggleTaskDone } = useStore();
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+
+  // Initialize collapsed nodes to include all parent tasks (tasks with children) by default
+  useEffect(() => {
+    const parentTasks = tasks.filter(task => !isLeaf(task.id, tasks));
+    setCollapsedNodes(new Set(parentTasks.map(t => t.id)));
+  }, [tasks.length]); // Only re-run when number of tasks changes
 
   // Task form state
   const [addingTaskFor, setAddingTaskFor] = useState<{ projectId: string; parentTaskId?: string } | null>(null);
@@ -132,6 +139,13 @@ export default function ProjectsTab() {
     const taskIsLeaf = isLeaf(node.id, tasks);
     const isEditing = editingTaskId === node.id;
 
+    // Calculate status indicator
+    const effectiveDueDate = getEffectiveDueDate(node, tasks);
+    const hoursRemaining = calculateTotalHoursRemaining(node, tasks);
+    const slack = calculateSlack(effectiveDueDate, hoursRemaining, settings.dailyCadence);
+    const urgencyBoost = slack !== undefined && slack < 0 ? 1000 : 0;
+    const statusIndicator = getStatusIndicator(urgencyBoost, slack);
+
     if (isEditing) {
       return (
         <div key={node.id} className="mb-2 p-3 border border-blue-300 rounded-lg bg-blue-50" style={{ marginLeft: `${node.level * 24}px` }}>
@@ -217,6 +231,7 @@ export default function ProjectsTab() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center space-x-2">
               <span className="text-xs font-mono text-gray-400">{node.id}</span>
+              <span className="text-base">{statusIndicator}</span>
               <h5 className={`text-sm font-medium ${node.done ? 'line-through text-gray-500' : 'text-gray-900'}`}>
                 {node.name}
               </h5>
@@ -230,6 +245,7 @@ export default function ProjectsTab() {
               <span>#{node.sortOrder}</span>
               {node.estHours && <span>{node.estHours}h</span>}
               {node.dueDate && <span>Due: {format(new Date(node.dueDate), 'MMM d')}</span>}
+              {effectiveDueDate && !node.dueDate && <span>Due: {format(new Date(effectiveDueDate), 'MMM d')} (inherited)</span>}
             </div>
           </div>
 
