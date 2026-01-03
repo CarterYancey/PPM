@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import type { Project, Task } from '../types';
 import { format } from 'date-fns';
 import { buildTaskTree, type TaskNode, isLeaf } from '../utils/taskTree';
-import { getEffectiveDueDate, calculateSlack, getStatusIndicator, calculateTotalHoursRemaining } from '../utils/prioritization';
+import { getEffectiveDueDate, calculateSlack, getStatusIndicator, calculateTotalHoursRemaining, calculateExpectedCompletion } from '../utils/prioritization';
 
 export default function ProjectsTab() {
   const { goals, projects, tasks, settings, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, toggleTaskDone } = useStore();
@@ -139,12 +139,26 @@ export default function ProjectsTab() {
     const taskIsLeaf = isLeaf(node.id, tasks);
     const isEditing = editingTaskId === node.id;
 
-    // Calculate status indicator
+    // Calculate status indicator and expected finish date
     const effectiveDueDate = getEffectiveDueDate(node, tasks);
     const hoursRemaining = calculateTotalHoursRemaining(node, tasks);
     const slack = calculateSlack(effectiveDueDate, hoursRemaining, settings.dailyCadence);
-    const urgencyBoost = slack !== undefined && slack < 0 ? 1000 : 0;
+
+    // Calculate urgency boost properly
+    let urgencyBoost = 0;
+    if (slack !== undefined) {
+      if (slack < 0) {
+        urgencyBoost = 1000; // At risk
+      } else {
+        urgencyBoost = 100 / (1 + slack);
+      }
+    }
     const statusIndicator = getStatusIndicator(urgencyBoost, slack);
+
+    // Calculate expected finish date
+    const expectedFinishDate = hoursRemaining > 0
+      ? calculateExpectedCompletion(hoursRemaining, settings.dailyCadence)
+      : undefined;
 
     if (isEditing) {
       return (
@@ -244,8 +258,8 @@ export default function ProjectsTab() {
             <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-gray-500">
               <span>#{node.sortOrder}</span>
               {node.estHours && <span>{node.estHours}h</span>}
-              {node.dueDate && <span>Due: {format(new Date(node.dueDate), 'MMM d')}</span>}
-              {effectiveDueDate && !node.dueDate && <span>Due: {format(new Date(effectiveDueDate), 'MMM d')} (inherited)</span>}
+              {effectiveDueDate && <span>Due: {format(new Date(effectiveDueDate), 'MMM d')}</span>}
+              {expectedFinishDate && <span>Finish: {format(new Date(expectedFinishDate), 'MMM d')}</span>}
             </div>
           </div>
 
