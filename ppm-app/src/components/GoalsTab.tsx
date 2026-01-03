@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import type { Goal, FibonacciPriority } from '../types';
+import type { Goal } from '../types';
 import { format } from 'date-fns';
 
-const FIBONACCI_PRIORITIES: FibonacciPriority[] = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
-
-function getPriorityColor(priority: FibonacciPriority): string {
+function getPriorityColor(priority: number): string {
   if (priority === 0) return 'bg-gray-100 text-gray-800';
   if (priority <= 5) return 'bg-white text-gray-800';
   if (priority <= 13) return 'bg-blue-50 text-blue-800';
@@ -100,19 +98,20 @@ export default function GoalsTab() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Priority (Fibonacci) *
+                Priority *
               </label>
-              <select
+              <input
+                type="number"
+                required
+                min="0"
                 value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) as FibonacciPriority })}
+                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-              >
-                {FIBONACCI_PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p} {p === 0 ? '(Paused)' : p <= 5 ? '(Low)' : p <= 13 ? '(Medium)' : '(High)'}
-                  </option>
-                ))}
-              </select>
+                placeholder="e.g., 0, 1, 2, 3, 5, 8, 13, 21, 34..."
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Suggested: 0=Paused, 1-5=Low, 8-13=Medium, 21+=High
+              </p>
             </div>
 
             <div>

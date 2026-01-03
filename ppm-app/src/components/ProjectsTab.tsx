@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import type { Project, FibonacciPriority } from '../types';
+import type { Project } from '../types';
 import { format } from 'date-fns';
-
-const FIBONACCI_PRIORITIES: FibonacciPriority[] = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
 
 export default function ProjectsTab() {
   const { goals, projects, tasks, addProject, updateProject, deleteProject } = useStore();
@@ -134,19 +132,20 @@ export default function ProjectsTab() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Priority (Fibonacci) *
+                Priority *
               </label>
-              <select
+              <input
+                type="number"
+                required
+                min="0"
                 value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) as FibonacciPriority })}
+                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-              >
-                {FIBONACCI_PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p} {p === 0 ? '(Paused)' : p <= 5 ? '(Low)' : p <= 13 ? '(Medium)' : '(High)'}
-                  </option>
-                ))}
-              </select>
+                placeholder="e.g., 0, 1, 2, 3, 5, 8, 13, 21, 34..."
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Relative to other projects in the same goal
+              </p>
             </div>
 
             <div>

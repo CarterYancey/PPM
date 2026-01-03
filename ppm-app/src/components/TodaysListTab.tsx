@@ -1,13 +1,30 @@
 import { useStore } from '../store';
 import { generateTodaysList } from '../utils/prioritization';
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 
 export default function TodaysListTab() {
   const { goals, projects, tasks, settings, toggleTaskDone } = useStore();
 
   const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
 
-  if (todaysList.length === 0) {
+  // Calculate cumulative finish dates
+  // Each task finishes after the previous task plus its own hours
+  let cumulativeDate = new Date();
+  const todaysListWithCumulativeDates = todaysList.map((item) => {
+    const hoursForThisTask = item.task.estHours || 0;
+    const daysForThisTask = Math.ceil(hoursForThisTask / settings.dailyCadence);
+    const finishDate = addDays(cumulativeDate, daysForThisTask);
+
+    // Update cumulative date for next task
+    cumulativeDate = finishDate;
+
+    return {
+      ...item,
+      cumulativeFinishDate: finishDate,
+    };
+  });
+
+  if (todaysListWithCumulativeDates.length === 0) {
     return (
       <div className="p-8 text-center text-gray-500">
         No tasks to work on right now. All done!
@@ -27,7 +44,7 @@ export default function TodaysListTab() {
       </div>
 
       <div className="space-y-2">
-        {todaysList.map((item, index) => (
+        {todaysListWithCumulativeDates.map((item, index) => (
           <div
             key={item.task.id}
             className={`
@@ -91,12 +108,10 @@ export default function TodaysListTab() {
                         )}
                       </span>
                     )}
-                    {item.expectedCompletion && !item.task.dueDate && (
-                      <span className="text-gray-600">
-                        <span className="font-medium">Expected:</span>{' '}
-                        {format(new Date(item.expectedCompletion), 'MMM d, yyyy')}
-                      </span>
-                    )}
+                    <span className="text-gray-600">
+                      <span className="font-medium">Will finish:</span>{' '}
+                      {format(item.cumulativeFinishDate, 'MMM d, yyyy')}
+                    </span>
                   </div>
                 </div>
               </div>

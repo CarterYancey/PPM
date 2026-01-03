@@ -1,10 +1,7 @@
-// Fibonacci priority values: 0, 1, 2, 3, 5, 8, 13, 21, 34, etc.
-export type FibonacciPriority = 0 | 1 | 2 | 3 | 5 | 8 | 13 | 21 | 34 | 55 | 89;
-
 export interface Goal {
   id: string; // G1, G2, G3...
   name: string;
-  priority: FibonacciPriority;
+  priority: number; // Any positive number (commonly Fibonacci: 0, 1, 2, 3, 5, 8, 13, 21, 34...)
   targetDate?: string; // ISO date string
   notes?: string;
 }
@@ -13,7 +10,7 @@ export interface Project {
   id: string; // P1, P2, P3...
   name: string;
   goalId: string; // Reference to Goal.id
-  priority: FibonacciPriority;
+  priority: number; // Any positive number
   dueDate?: string; // ISO date string
 }
 
