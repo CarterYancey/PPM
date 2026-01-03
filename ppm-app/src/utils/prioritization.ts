@@ -296,11 +296,12 @@ export function generateTodaysList(
   dailyCadence: number
 ): TodayListItem[] {
   const calculationsMap = calculateAllTaskMetrics(tasks, goals, projects, dailyCadence);
+  const today = new Date();
 
   // Get only leaf tasks that are not done
   const leafTasks = tasks.filter((t) => isLeaf(t.id, tasks) && !t.done);
 
-  const todaysList: TodayListItem[] = leafTasks.map((task) => {
+  const taskEntries = leafTasks.map((task) => {
     const project = projects.find((p) => p.id === task.projectId)!;
     const goal = goals.find((g) => g.id === project.goalId)!;
     const calculations = calculationsMap.get(task.id)!;
@@ -310,26 +311,71 @@ export function generateTodaysList(
 
     // Get effective due date (task's own or inherited from parent or project)
     const effectiveDueDate = getEffectiveDueDate(task, tasks, projects);
+    const latestStart = effectiveDueDate
+      ? differenceInDays(parseISO(effectiveDueDate), today) - calculations.daysNeeded
+      : Number.POSITIVE_INFINITY;
 
     return {
-      task: { ...task, dueDate: effectiveDueDate }, // Use effective due date for display
-      parentName: parent?.name,
-      projectName: project.name,
-      goalName: goal.name,
-      urgencyScore: calculations.urgencyScore,
-      statusIndicator: getStatusIndicator(calculations.urgencyBoost, calculations.slack),
-      slack: calculations.slack,
-      expectedCompletion: calculations.expectedCompletionDate,
+      task,
+      parent,
+      project,
+      goal,
+      effectiveDueDate,
+      latestStart,
+      calculations,
     };
   });
 
-  // Sort by urgency score (descending), then by sort order (ascending)
-  todaysList.sort((a, b) => {
-    if (a.urgencyScore !== b.urgencyScore) {
-      return b.urgencyScore - a.urgencyScore; // Higher score first
-    }
-    return a.task.sortOrder - b.task.sortOrder; // Lower sort order first
-  });
+  const isFeasiblePick = (
+    candidate: typeof taskEntries[number],
+    remaining: typeof taskEntries,
+    cumulativeDays: number
+  ): boolean => {
+    return remaining.every((other) => {
+      if (other.task.id === candidate.task.id) return true;
+      if (!Number.isFinite(other.latestStart)) return true;
+      return cumulativeDays + candidate.calculations.daysNeeded <= other.latestStart;
+    });
+  };
+
+  const orderedEntries: typeof taskEntries = [];
+  const remaining = [...taskEntries];
+  let cumulativeDays = 0;
+
+  while (remaining.length > 0) {
+    const feasible = remaining.filter((candidate) =>
+      isFeasiblePick(candidate, remaining, cumulativeDays)
+    );
+
+    const candidates = feasible.length > 0 ? feasible : remaining;
+
+    candidates.sort((a, b) => {
+      if (a.calculations.basePriority !== b.calculations.basePriority) {
+        return b.calculations.basePriority - a.calculations.basePriority;
+      }
+      if (a.latestStart !== b.latestStart) {
+        return a.latestStart - b.latestStart;
+      }
+      return a.task.sortOrder - b.task.sortOrder;
+    });
+
+    const next = candidates[0];
+    orderedEntries.push(next);
+    cumulativeDays += next.calculations.daysNeeded;
+    const nextIndex = remaining.findIndex((entry) => entry.task.id === next.task.id);
+    remaining.splice(nextIndex, 1);
+  }
+
+  const todaysList: TodayListItem[] = orderedEntries.map((entry) => ({
+    task: { ...entry.task, dueDate: entry.effectiveDueDate }, // Use effective due date for display
+    parentName: entry.parent?.name,
+    projectName: entry.project.name,
+    goalName: entry.goal.name,
+    urgencyScore: entry.calculations.urgencyScore,
+    statusIndicator: getStatusIndicator(entry.calculations.urgencyBoost, entry.calculations.slack),
+    slack: entry.calculations.slack,
+    expectedCompletion: entry.calculations.expectedCompletionDate,
+  }));
 
   return todaysList;
 }
