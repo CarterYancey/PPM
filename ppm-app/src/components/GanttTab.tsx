@@ -13,6 +13,7 @@ type ScheduledTask = {
   end: Date;
   done: boolean;
   estHours?: number;
+  priorityRank: number;
 };
 
 type ProjectSchedule = {
@@ -38,7 +39,7 @@ export default function GanttTab() {
     const scheduleMap = new Map<string, ScheduledTask[]>();
     let cursor = timelineStart;
 
-    todaysList.forEach((item) => {
+    todaysList.forEach((item, index) => {
       const hoursForTask = item.task.estHours || 0;
       const durationDays = Math.ceil(hoursForTask / settings.dailyCadence);
       const start = cursor;
@@ -52,6 +53,7 @@ export default function GanttTab() {
         end,
         done: item.task.done,
         estHours: item.task.estHours,
+        priorityRank: index,
       };
 
       const bucket = scheduleMap.get(item.task.projectId) ?? [];
@@ -67,7 +69,9 @@ export default function GanttTab() {
       return {
         id: project.id,
         name: project.name,
-        tasks: scheduleMap.get(project.id) ?? [],
+        tasks: (scheduleMap.get(project.id) ?? []).toSorted(
+          (a, b) => a.priorityRank - b.priorityRank
+        ),
         completedTasks: projectTasks.filter((task) => task.done).length,
         totalTasks: projectTasks.length,
       };
