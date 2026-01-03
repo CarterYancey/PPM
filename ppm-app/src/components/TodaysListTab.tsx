@@ -1,53 +1,33 @@
+import { useMemo } from 'react';
 import { useStore } from '../store';
 import { generateTodaysList } from '../utils/prioritization';
-import { format, addDays } from 'date-fns';
+import { getTaskScheduleData } from '../utils/scheduling';
+import { format } from 'date-fns';
 
 export default function TodaysListTab() {
   const { goals, projects, tasks, settings, toggleTaskDone } = useStore();
 
+  // Get centralized scheduling data - single source of truth
+  const taskScheduleData = useMemo(() => {
+    return getTaskScheduleData(tasks, goals, projects, settings.dailyCadence);
+  }, [tasks, goals, projects, settings.dailyCadence]);
+
+  // Get the priority-sorted list of tasks
   const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
 
-  // Calculate cumulative finish dates
-  // Each task finishes after the previous task plus its own hours
-  let cumulativeDate = new Date();
-  const todaysListWithCumulativeDates = todaysList.map((item) => {
-    const hoursForThisTask = item.task.estHours || 0;
-    const daysForThisTask = Math.ceil(hoursForThisTask / settings.dailyCadence);
-    const finishDate = addDays(cumulativeDate, daysForThisTask);
-
-    // Update cumulative date for next task
-    cumulativeDate = finishDate;
-
-    // Recalculate status indicator based on cumulative finish date
-    let statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = item.statusIndicator;
-    let actualSlack = item.slack;
-
-    if (item.task.dueDate) {
-      const dueDate = new Date(item.task.dueDate);
-      const daysUntilDue = Math.floor((dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-      const daysUntilFinish = Math.floor((finishDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-      actualSlack = daysUntilDue - daysUntilFinish;
-
-      if (actualSlack < 0) {
-        statusIndicator = '🔴'; // At risk - will finish after due date
-      } else if (actualSlack <= 2) {
-        statusIndicator = '🟡'; // Tight - 2 days or less slack
-      } else {
-        statusIndicator = '🟢'; // On track
-      }
-    } else {
-      statusIndicator = '⚪'; // No deadline
-    }
+  // Enhance with scheduling data from centralized source
+  const todaysListWithScheduling = todaysList.map((item) => {
+    const scheduleData = taskScheduleData.get(item.task.id);
 
     return {
       ...item,
-      cumulativeFinishDate: finishDate,
-      statusIndicator,
-      slack: actualSlack,
+      cumulativeFinishDate: scheduleData?.finishDate || new Date(),
+      statusIndicator: scheduleData?.statusIndicator || item.statusIndicator,
+      slack: scheduleData?.slack,
     };
   });
 
-  if (todaysListWithCumulativeDates.length === 0) {
+  if (todaysListWithScheduling.length === 0) {
     return (
       <div className="p-8 text-center text-gray-500">
         No tasks to work on right now. All done!
@@ -67,7 +47,7 @@ export default function TodaysListTab() {
       </div>
 
       <div className="space-y-2">
-        {todaysListWithCumulativeDates.map((item, index) => (
+        {todaysListWithScheduling.map((item, index) => (
           <div
             key={item.task.id}
             className={`

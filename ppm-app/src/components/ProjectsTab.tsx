@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import type { Project, Task } from '../types';
-import { format, addDays } from 'date-fns';
+import { format } from 'date-fns';
 import { buildTaskTree, type TaskNode, isLeaf } from '../utils/taskTree';
-import { generateTodaysList } from '../utils/prioritization';
+import { getTaskScheduleData } from '../utils/scheduling';
 
 export default function ProjectsTab() {
   const { goals, projects, tasks, settings, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, toggleTaskDone } = useStore();
@@ -11,107 +11,9 @@ export default function ProjectsTab() {
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
 
-  // Generate today's list with cumulative finish dates (same logic as TodaysListTab)
-  const taskFinishData = useMemo(() => {
-    const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
-
-    // Calculate cumulative finish dates for leaf tasks
-    let cumulativeDate = new Date();
-    const finishMap = new Map<string, { finishDate: Date; statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' }>();
-
-    todaysList.forEach((item) => {
-      const hoursForThisTask = item.task.estHours || 0;
-      const daysForThisTask = Math.ceil(hoursForThisTask / settings.dailyCadence);
-      const finishDate = addDays(cumulativeDate, daysForThisTask);
-      cumulativeDate = finishDate;
-
-      // Recalculate status indicator based on cumulative finish date
-      let statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = item.statusIndicator;
-
-      if (item.task.dueDate) {
-        const dueDate = new Date(item.task.dueDate);
-        const daysUntilDue = Math.floor((dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-        const daysUntilFinish = Math.floor((finishDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-        const actualSlack = daysUntilDue - daysUntilFinish;
-
-        if (actualSlack < 0) {
-          statusIndicator = '🔴'; // At risk
-        } else if (actualSlack <= 2) {
-          statusIndicator = '🟡'; // Tight
-        } else {
-          statusIndicator = '🟢'; // On track
-        }
-      } else {
-        statusIndicator = '⚪'; // No deadline
-      }
-
-      finishMap.set(item.task.id, { finishDate, statusIndicator });
-    });
-
-    // Calculate finish dates for parent tasks (Groups)
-    // A parent's finish date is the max finish date of all its leaf descendants
-    const getLeafDescendants = (taskId: string): Task[] => {
-      const children = tasks.filter(t => t.parentTaskId === taskId);
-      if (children.length === 0) return [];
-
-      let leaves: Task[] = [];
-      for (const child of children) {
-        if (isLeaf(child.id, tasks)) {
-          leaves.push(child);
-        } else {
-          leaves = leaves.concat(getLeafDescendants(child.id));
-        }
-      }
-      return leaves;
-    };
-
-    // Process all parent tasks
-    const parentTasks = tasks.filter(t => !isLeaf(t.id, tasks));
-    parentTasks.forEach(parent => {
-      const leafDescendants = getLeafDescendants(parent.id);
-      if (leafDescendants.length === 0) return;
-
-      // Find the max finish date among all leaf descendants
-      const descendantFinishDates = leafDescendants
-        .map(leaf => finishMap.get(leaf.id)?.finishDate)
-        .filter((date): date is Date => date !== undefined);
-
-      if (descendantFinishDates.length === 0) return;
-
-      const maxFinishDate = new Date(Math.max(...descendantFinishDates.map(d => d.getTime())));
-
-      // Get parent's effective due date
-      const getEffectiveDueDate = (task: Task): string | undefined => {
-        if (task.dueDate) return task.dueDate;
-        if (task.parentTaskId) {
-          const parentTask = tasks.find(t => t.id === task.parentTaskId);
-          if (parentTask) return getEffectiveDueDate(parentTask);
-        }
-        return undefined;
-      };
-
-      const parentDueDate = getEffectiveDueDate(parent);
-      let parentStatusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = '⚪';
-
-      if (parentDueDate) {
-        const dueDate = new Date(parentDueDate);
-        const daysUntilDue = Math.floor((dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-        const daysUntilFinish = Math.floor((maxFinishDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-        const actualSlack = daysUntilDue - daysUntilFinish;
-
-        if (actualSlack < 0) {
-          parentStatusIndicator = '🔴'; // At risk
-        } else if (actualSlack <= 2) {
-          parentStatusIndicator = '🟡'; // Tight
-        } else {
-          parentStatusIndicator = '🟢'; // On track
-        }
-      }
-
-      finishMap.set(parent.id, { finishDate: maxFinishDate, statusIndicator: parentStatusIndicator });
-    });
-
-    return finishMap;
+  // Get centralized scheduling data - single source of truth
+  const taskScheduleData = useMemo(() => {
+    return getTaskScheduleData(tasks, goals, projects, settings.dailyCadence);
   }, [tasks, goals, projects, settings.dailyCadence]);
 
   // Initialize collapsed nodes to include all parent tasks (tasks with children) by default
@@ -242,19 +144,13 @@ export default function ProjectsTab() {
     const taskIsLeaf = isLeaf(node.id, tasks);
     const isEditing = editingTaskId === node.id;
 
-    // Get finish data from cumulative calculation (same as Today's List)
-    const finishData = taskFinishData.get(node.id);
-    const statusIndicator = finishData?.statusIndicator || '⚪';
-    const expectedFinishDate = finishData?.finishDate;
+    // Get scheduling data from centralized source
+    const scheduleData = taskScheduleData.get(node.id);
+    const statusIndicator = scheduleData?.statusIndicator || '⚪';
+    const expectedFinishDate = scheduleData?.finishDate;
 
     // Get effective due date for display
-    const effectiveDueDate = node.dueDate || (() => {
-      if (node.parentTaskId) {
-        const parent = tasks.find(t => t.id === node.parentTaskId);
-        if (parent?.dueDate) return parent.dueDate;
-      }
-      return undefined;
-    })();
+    const effectiveDueDate = scheduleData?.effectiveDueDate || node.dueDate;
 
     if (isEditing) {
       return (

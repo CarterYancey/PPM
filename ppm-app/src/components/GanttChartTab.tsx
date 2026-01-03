@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { format, addDays, startOfDay, parseISO } from 'date-fns';
-import { calculateTotalHoursRemaining, calculateCompletionPercentage, calculateSlack, calculateDaysNeeded, getEffectiveDueDate } from '../utils/prioritization';
 import { isLeaf, getChildren } from '../utils/taskTree';
+import { getTaskScheduleData, type StatusIndicator } from '../utils/scheduling';
 import type { Task, Goal, Project } from '../types';
 
 interface GanttItem {
@@ -14,7 +14,7 @@ interface GanttItem {
   endDate: Date;
   dueDate?: Date;
   completionPercentage: number;
-  statusIndicator: '🔴' | '🟡' | '🟢' | '⚪';
+  statusIndicator: StatusIndicator;
   goal?: Goal;
   project?: Project;
   task?: Task;
@@ -30,6 +30,11 @@ export default function GanttChartTab() {
 
   const today = startOfDay(new Date());
 
+  // Get centralized scheduling data - single source of truth
+  const taskScheduleData = useMemo(() => {
+    return getTaskScheduleData(tasks, goals, projects, settings.dailyCadence);
+  }, [tasks, goals, projects, settings.dailyCadence]);
+
   // Calculate timeline range based on view mode
   const timelineRange = useMemo(() => {
     const daysToShow = viewMode === '2weeks' ? 14 : viewMode === '1month' ? 30 : 90;
@@ -38,25 +43,12 @@ export default function GanttChartTab() {
     return { startDate, endDate, daysToShow };
   }, [viewMode, today]);
 
-  // Build Gantt items with calculated dates
+  // Build Gantt items using centralized scheduling data
   const ganttItems = useMemo(() => {
     const items: GanttItem[] = [];
-    const dailyCadence = settings.dailyCadence;
 
     // Sort goals by priority (higher priority first)
     const sortedGoals = [...goals].sort((a, b) => b.priority - a.priority);
-
-    // Track cumulative hours for calculating start dates
-    let cumulativeHours = 0;
-
-    // Helper to calculate dates based on cumulative hours
-    const calculateDates = (hoursRemaining: number): { startDate: Date; endDate: Date } => {
-      const startDays = Math.ceil(cumulativeHours / dailyCadence);
-      const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
-      const startDate = addDays(today, startDays);
-      const endDate = addDays(today, startDays + Math.max(daysNeeded, 1));
-      return { startDate, endDate };
-    };
 
     sortedGoals.forEach((goal) => {
       // Get projects for this goal, sorted by priority
@@ -66,16 +58,27 @@ export default function GanttChartTab() {
 
       if (goalProjects.length === 0) return;
 
-      // Calculate goal-level metrics
+      // Calculate goal-level metrics from task schedules
       const goalTasks = tasks.filter((t) => goalProjects.some((p) => p.id === t.projectId));
-      const goalHoursRemaining = goalTasks.reduce((sum, t) => {
-        if (isLeaf(t.id, tasks) && !t.done) {
-          return sum + (t.estHours || 0);
-        }
-        return sum;
-      }, 0);
+      const goalLeafTasks = goalTasks.filter((t) => isLeaf(t.id, tasks) && !t.done);
 
-      const { startDate: goalStart, endDate: goalEnd } = calculateDates(goalHoursRemaining);
+      // Get schedule data for goal tasks
+      const goalSchedules = goalLeafTasks
+        .map((t) => taskScheduleData.get(t.id))
+        .filter((s) => s !== undefined);
+
+      // Calculate goal's start/end dates from its tasks
+      let goalStart = today;
+      let goalEnd = today;
+      let goalHoursRemaining = 0;
+
+      if (goalSchedules.length > 0) {
+        const startDates = goalSchedules.map((s) => s.startDate.getTime());
+        const endDates = goalSchedules.map((s) => s.finishDate.getTime());
+        goalStart = new Date(Math.min(...startDates));
+        goalEnd = new Date(Math.max(...endDates));
+        goalHoursRemaining = goalSchedules.reduce((sum, s) => sum + s.hoursRemaining, 0);
+      }
 
       // Goal item
       items.push({
@@ -94,20 +97,30 @@ export default function GanttChartTab() {
       });
 
       if (collapsedGoals.has(goal.id)) {
-        cumulativeHours += goalHoursRemaining;
         return;
       }
 
       goalProjects.forEach((project) => {
         const projectTasks = tasks.filter((t) => t.projectId === project.id);
-        const projectHoursRemaining = projectTasks.reduce((sum, t) => {
-          if (isLeaf(t.id, tasks) && !t.done) {
-            return sum + (t.estHours || 0);
-          }
-          return sum;
-        }, 0);
+        const projectLeafTasks = projectTasks.filter((t) => isLeaf(t.id, tasks) && !t.done);
 
-        const { startDate: projectStart, endDate: projectEnd } = calculateDates(projectHoursRemaining);
+        // Get schedule data for project tasks
+        const projectSchedules = projectLeafTasks
+          .map((t) => taskScheduleData.get(t.id))
+          .filter((s) => s !== undefined);
+
+        // Calculate project's start/end dates from its tasks
+        let projectStart = today;
+        let projectEnd = today;
+        let projectHoursRemaining = 0;
+
+        if (projectSchedules.length > 0) {
+          const startDates = projectSchedules.map((s) => s.startDate.getTime());
+          const endDates = projectSchedules.map((s) => s.finishDate.getTime());
+          projectStart = new Date(Math.min(...startDates));
+          projectEnd = new Date(Math.max(...endDates));
+          projectHoursRemaining = projectSchedules.reduce((sum, s) => sum + s.hoursRemaining, 0);
+        }
 
         // Project item
         items.push({
@@ -127,7 +140,6 @@ export default function GanttChartTab() {
         });
 
         if (collapsedProjects.has(project.id)) {
-          cumulativeHours += projectHoursRemaining;
           return;
         }
 
@@ -138,28 +150,17 @@ export default function GanttChartTab() {
 
         const processTaskNode = (task: Task, level: number) => {
           const taskIsLeaf = isLeaf(task.id, tasks);
-          const hoursRemaining = calculateTotalHoursRemaining(task, tasks);
-          const completionPercentage = calculateCompletionPercentage(task, tasks);
-          const effectiveDueDate = getEffectiveDueDate(task, tasks);
-          const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
-
-          // Calculate dates for this task
-          const { startDate: taskStart, endDate: taskEnd } = calculateDates(hoursRemaining);
-
-          // Determine status
-          let statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = '⚪';
-          if (effectiveDueDate) {
-            if (slack !== undefined && slack < 0) {
-              statusIndicator = '🔴';
-            } else if (slack !== undefined && slack <= 2) {
-              statusIndicator = '🟡';
-            } else {
-              statusIndicator = '🟢';
-            }
-          }
 
           // Skip completed leaf tasks
           if (taskIsLeaf && task.done) {
+            return;
+          }
+
+          // Get scheduling data from centralized source
+          const scheduleData = taskScheduleData.get(task.id);
+
+          if (!scheduleData) {
+            // Task has no schedule data (shouldn't happen for active tasks)
             return;
           }
 
@@ -168,22 +169,17 @@ export default function GanttChartTab() {
             name: task.name,
             type: 'task',
             level: level + 2,
-            startDate: taskStart,
-            endDate: taskEnd,
-            dueDate: effectiveDueDate ? parseISO(effectiveDueDate) : undefined,
-            completionPercentage,
-            statusIndicator,
+            startDate: scheduleData.startDate,
+            endDate: scheduleData.finishDate,
+            dueDate: scheduleData.effectiveDueDate ? parseISO(scheduleData.effectiveDueDate) : undefined,
+            completionPercentage: taskIsLeaf ? (task.done ? 100 : 0) : calculateTaskCompletion(task, tasks),
+            statusIndicator: scheduleData.statusIndicator,
             task,
             project,
             goal,
             isLeaf: taskIsLeaf,
-            hoursRemaining,
+            hoursRemaining: scheduleData.hoursRemaining,
           });
-
-          // Update cumulative hours for leaf tasks
-          if (taskIsLeaf && !task.done) {
-            cumulativeHours += task.estHours || 0;
-          }
 
           // Process children
           if (!taskIsLeaf) {
@@ -197,7 +193,7 @@ export default function GanttChartTab() {
     });
 
     return items;
-  }, [goals, projects, tasks, settings.dailyCadence, collapsedGoals, collapsedProjects, today]);
+  }, [goals, projects, tasks, taskScheduleData, collapsedGoals, collapsedProjects, today]);
 
   // Helper functions
   function calculateGoalCompletion(_goal: Goal, goalProjects: Project[], allTasks: Task[]): number {
@@ -224,6 +220,35 @@ export default function GanttChartTab() {
     if (totalHours === 0) return 0;
 
     const completedHours = leafTasks
+      .filter((t) => t.done)
+      .reduce((sum, t) => sum + (t.estHours || 0), 0);
+
+    return Math.round((completedHours / totalHours) * 100);
+  }
+
+  function calculateTaskCompletion(task: Task, allTasks: Task[]): number {
+    const getLeafDescendants = (taskId: string): Task[] => {
+      const children = allTasks.filter((t) => t.parentTaskId === taskId);
+      if (children.length === 0) return [];
+
+      let leaves: Task[] = [];
+      for (const child of children) {
+        if (isLeaf(child.id, allTasks)) {
+          leaves.push(child);
+        } else {
+          leaves = leaves.concat(getLeafDescendants(child.id));
+        }
+      }
+      return leaves;
+    };
+
+    const leafDescendants = getLeafDescendants(task.id);
+    if (leafDescendants.length === 0) return 0;
+
+    const totalHours = leafDescendants.reduce((sum, t) => sum + (t.estHours || 0), 0);
+    if (totalHours === 0) return 0;
+
+    const completedHours = leafDescendants
       .filter((t) => t.done)
       .reduce((sum, t) => sum + (t.estHours || 0), 0);
 
