@@ -260,6 +260,70 @@ export default function ProjectsTab() {
           </div>
         </div>
 
+        {/* Show subtask form if adding to this task */}
+        {addingTaskFor?.parentTaskId === node.id && (
+          <div className="mb-2 p-3 border border-blue-300 rounded-lg bg-blue-50" style={{ marginLeft: `${(node.level + 1) * 24}px` }}>
+            <form onSubmit={handleTaskSubmit} className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Subtask Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={taskFormData.name}
+                  onChange={(e) => setTaskFormData({ ...taskFormData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                  placeholder="e.g., Complete first draft"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Position
+                    <span className="ml-1 text-gray-500" title="Order this task will appear (1=first, 2=second, etc.)">ⓘ</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={taskFormData.sortOrder}
+                    onChange={(e) => setTaskFormData({ ...taskFormData, sortOrder: parseInt(e.target.value) })}
+                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={taskFormData.estHours || ''}
+                    onChange={(e) => setTaskFormData({ ...taskFormData, estHours: e.target.value ? parseFloat(e.target.value) : undefined })}
+                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                    placeholder="Optional"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Due Date</label>
+                  <input
+                    type="date"
+                    value={taskFormData.dueDate || ''}
+                    onChange={(e) => setTaskFormData({ ...taskFormData, dueDate: e.target.value || undefined })}
+                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                </div>
+              </div>
+              <div className="flex space-x-2">
+                <button type="submit" className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600">
+                  Add Subtask
+                </button>
+                <button type="button" onClick={handleTaskCancel} className="px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
         {hasChildren && !isCollapsed && (
           <div className="mt-1">
             {node.children.map((child) => renderTaskNode(child, projectId))}

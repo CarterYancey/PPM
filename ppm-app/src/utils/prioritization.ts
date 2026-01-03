@@ -181,8 +181,10 @@ export function calculateTaskMetrics(
   const urgencyBoost = calculateUrgencyBoost(task, allTasks, hoursRemaining, dailyCadence, calculationsMap);
   const urgencyScore = basePriority + urgencyBoost;
 
+  // Use effective due date (inherited from parent if needed)
+  const effectiveDueDate = getEffectiveDueDate(task, allTasks);
   const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
-  const slack = calculateSlack(task.dueDate, hoursRemaining, dailyCadence);
+  const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
 
   let level = 0;
   let currentTask = task;
@@ -201,8 +203,8 @@ export function calculateTaskMetrics(
     expectedCompletionDate: hoursRemaining > 0
       ? calculateExpectedCompletion(hoursRemaining, dailyCadence)
       : undefined,
-    daysUntilDue: task.dueDate
-      ? differenceInDays(parseISO(task.dueDate), new Date())
+    daysUntilDue: effectiveDueDate
+      ? differenceInDays(parseISO(effectiveDueDate), new Date())
       : undefined,
     daysNeeded,
     slack,
