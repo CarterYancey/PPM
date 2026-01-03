@@ -35,6 +35,15 @@ export default function GanttTab() {
   );
 
   const projectSchedules = useMemo<ProjectSchedule[]>(() => {
+    const orderedProjects = goals
+      .slice()
+      .sort((a, b) => b.priority - a.priority)
+      .flatMap((goal) =>
+        projects
+          .filter((project) => project.goalId === goal.id)
+          .slice()
+          .sort((a, b) => b.priority - a.priority)
+      );
     const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
     const scheduleMap = new Map<string, ScheduledTask[]>();
     let cursor = timelineStart;
@@ -61,7 +70,7 @@ export default function GanttTab() {
       scheduleMap.set(item.task.projectId, bucket);
     });
 
-    return projects.map((project) => {
+    return orderedProjects.map((project) => {
       const projectTasks = tasks
         .filter((task) => task.projectId === project.id)
         .filter((task) => isLeaf(task.id, tasks));
@@ -69,9 +78,9 @@ export default function GanttTab() {
       return {
         id: project.id,
         name: project.name,
-        tasks: (scheduleMap.get(project.id) ?? []).toSorted(
-          (a, b) => a.priorityRank - b.priorityRank
-        ),
+        tasks: (scheduleMap.get(project.id) ?? [])
+          .slice()
+          .sort((a, b) => a.priorityRank - b.priorityRank),
         completedTasks: projectTasks.filter((task) => task.done).length,
         totalTasks: projectTasks.length,
       };
