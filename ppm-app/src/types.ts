@@ -64,6 +64,7 @@ export interface TodayListItem {
   urgencyScore: number;
   basePriority: number; // For secondary sort when latestStartDate is same
   latestStartDate?: number; // Days from today when task MUST begin (undefined = no deadline)
+  cumulativeSlack?: number; // Slack based on total work of all sibling tasks with same deadline
   statusIndicator: '🔴' | '🟡' | '🟢' | '⚪'; // at risk, tight, on track, no deadline
   slack?: number;
   expectedCompletion?: string;
