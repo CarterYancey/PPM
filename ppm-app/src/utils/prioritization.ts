@@ -122,6 +122,70 @@ export function getEffectiveDueDate(task: Task, allTasks: Task[], projects: Proj
 }
 
 /**
+ * Calculate the latest start date for a task (when it MUST begin to meet its deadline)
+ * Returns: number of days from today (can be negative if already late)
+ * Returns undefined if no due date
+ */
+export function calculateLatestStartDate(
+  dueDate: string | undefined,
+  hoursRemaining: number,
+  dailyCadence: number
+): number | undefined {
+  if (!dueDate) return undefined;
+
+  const today = new Date();
+  const due = parseISO(dueDate);
+  const daysUntilDue = differenceInDays(due, today);
+  const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
+
+  // Latest start date = days until due - days needed
+  // If negative, we're already past the latest start date
+  return daysUntilDue - daysNeeded;
+}
+
+/**
+ * Get the total remaining hours for all incomplete leaf tasks that share the same
+ * effective due date constraint (same parent or same project for root tasks).
+ * This is used to calculate the "cumulative" latest start date for scheduling.
+ */
+export function getCumulativeHoursForDeadline(
+  task: Task,
+  allTasks: Task[],
+  projects: Project[],
+  effectiveDueDate: string | undefined
+): number {
+  if (!effectiveDueDate) {
+    // No deadline - just return this task's hours
+    return task.estHours || 0;
+  }
+
+  // Find all sibling leaf tasks that share the same effective due date
+  let siblingLeaves: Task[];
+
+  if (task.parentTaskId) {
+    // Task has a parent - get all leaf descendants of that parent
+    siblingLeaves = getLeafDescendants(task.parentTaskId, allTasks);
+  } else {
+    // Root-level task - get all root-level leaf tasks in the same project
+    siblingLeaves = allTasks.filter(t =>
+      t.projectId === task.projectId &&
+      !t.parentTaskId &&
+      isLeaf(t.id, allTasks)
+    );
+  }
+
+  // Filter to only incomplete tasks with the same effective due date
+  const tasksWithSameDeadline = siblingLeaves.filter(t => {
+    if (t.done) return false;
+    const tDueDate = getEffectiveDueDate(t, allTasks, projects);
+    return tDueDate === effectiveDueDate;
+  });
+
+  // Sum up total hours
+  return tasksWithSameDeadline.reduce((sum, t) => sum + (t.estHours || 0), 0);
+}
+
+/**
  * Calculate urgency boost based on deadline
  * - If slack < 0: boost = 1000 (at risk!)
  * - Otherwise: boost = 100 / (1 + slack)
@@ -194,6 +258,7 @@ export function calculateTaskMetrics(
   const effectiveDueDate = getEffectiveDueDate(task, allTasks, projects);
   const daysNeeded = calculateDaysNeeded(hoursRemaining, dailyCadence);
   const slack = calculateSlack(effectiveDueDate, hoursRemaining, dailyCadence);
+  const latestStartDate = calculateLatestStartDate(effectiveDueDate, hoursRemaining, dailyCadence);
 
   let level = 0;
   let currentTask = task;
@@ -217,6 +282,7 @@ export function calculateTaskMetrics(
       : undefined,
     daysNeeded,
     slack,
+    latestStartDate,
     urgencyScore,
     basePriority,
     urgencyBoost,
@@ -286,6 +352,10 @@ export function getStatusIndicator(
   return '🟢'; // On track
 }
 
+// Slack threshold: tasks with cumulative slack <= this are considered "urgent"
+// and will be sorted by priority. Tasks with more slack defer to urgent tasks.
+const URGENCY_SLACK_THRESHOLD = 5;
+
 /**
  * Generate Today's List - sorted list of all incomplete leaf tasks
  */
@@ -311,24 +381,82 @@ export function generateTodaysList(
     // Get effective due date (task's own or inherited from parent or project)
     const effectiveDueDate = getEffectiveDueDate(task, tasks, projects);
 
+    // Calculate cumulative hours for all tasks sharing this deadline
+    // This accounts for sibling subtasks that all need to be done
+    const cumulativeHours = getCumulativeHoursForDeadline(task, tasks, projects, effectiveDueDate);
+    const cumulativeSlack = calculateSlack(effectiveDueDate, cumulativeHours, dailyCadence);
+
     return {
       task: { ...task, dueDate: effectiveDueDate }, // Use effective due date for display
       parentName: parent?.name,
       projectName: project.name,
       goalName: goal.name,
       urgencyScore: calculations.urgencyScore,
+      basePriority: calculations.basePriority,
+      latestStartDate: calculations.latestStartDate,
+      cumulativeSlack,
       statusIndicator: getStatusIndicator(calculations.urgencyBoost, calculations.slack),
       slack: calculations.slack,
       expectedCompletion: calculations.expectedCompletionDate,
     };
   });
 
-  // Sort by urgency score (descending), then by sort order (ascending)
+  // Sort using priority-aware deadline scheduling:
+  //
+  // 1. URGENT tasks (cumulativeSlack <= threshold): sorted by PRIORITY (higher first)
+  //    - These are tasks that need to start soon to meet their deadlines
+  //    - Higher priority tasks should not be delayed by lower priority ones
+  //
+  // 2. NON-URGENT tasks (cumulativeSlack > threshold OR no deadline): sorted by PRIORITY (higher first)
+  //    - These have plenty of slack and should not preempt urgent tasks
+  //    - Among non-urgent tasks, higher priority comes first (they have flexibility)
+  //    - Tasks with no deadline are treated the same as non-urgent tasks
+  //
+  // This ensures:
+  // - Higher priority tasks are protected from slipping when deadlines are tight
+  // - Higher priority tasks with lots of slack don't unnecessarily preempt urgent lower-priority work
+  // - Higher priority tasks without deadlines aren't pushed behind low-priority non-urgent work
   todaysList.sort((a, b) => {
-    if (a.urgencyScore !== b.urgencyScore) {
-      return b.urgencyScore - a.urgencyScore; // Higher score first
+    // Determine urgency: urgent = has deadline AND cumulative slack <= threshold
+    const aIsUrgent = a.cumulativeSlack !== undefined && a.cumulativeSlack <= URGENCY_SLACK_THRESHOLD;
+    const bIsUrgent = b.cumulativeSlack !== undefined && b.cumulativeSlack <= URGENCY_SLACK_THRESHOLD;
+
+    // Urgent tasks come before non-urgent tasks
+    if (aIsUrgent && !bIsUrgent) return -1;
+    if (!aIsUrgent && bIsUrgent) return 1;
+
+    if (aIsUrgent && bIsUrgent) {
+      // Both are urgent - sort by PRIORITY (higher first)
+      // This protects higher priority tasks from slipping
+      if (a.basePriority !== b.basePriority) {
+        return b.basePriority - a.basePriority;
+      }
+      // Same priority - earlier deadline first (lower slack = more urgent)
+      if (a.cumulativeSlack !== b.cumulativeSlack) {
+        return a.cumulativeSlack! - b.cumulativeSlack!;
+      }
+      return a.task.sortOrder - b.task.sortOrder;
     }
-    return a.task.sortOrder - b.task.sortOrder; // Lower sort order first
+
+    // Both are non-urgent (either high slack or no deadline)
+    // Sort by PRIORITY (higher first) since they all have flexibility
+    if (a.basePriority !== b.basePriority) {
+      return b.basePriority - a.basePriority;
+    }
+
+    // Same priority - tasks with deadlines come before tasks without
+    // (among same priority, prefer to get deadline work done)
+    const aHasDeadline = a.cumulativeSlack !== undefined;
+    const bHasDeadline = b.cumulativeSlack !== undefined;
+    if (aHasDeadline && !bHasDeadline) return -1;
+    if (!aHasDeadline && bHasDeadline) return 1;
+
+    // Both have deadlines or both don't - use slack as tiebreaker if available
+    if (aHasDeadline && bHasDeadline && a.cumulativeSlack !== b.cumulativeSlack) {
+      return a.cumulativeSlack! - b.cumulativeSlack!;
+    }
+
+    return a.task.sortOrder - b.task.sortOrder;
   });
 
   return todaysList;

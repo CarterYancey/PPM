@@ -40,6 +40,7 @@ export interface TaskCalculations {
   daysUntilDue?: number; // Due date - today (if applicable)
   daysNeeded: number; // Hours remaining / daily cadence
   slack?: number; // Days until due - days needed
+  latestStartDate?: number; // Days from today when task MUST begin to meet deadline (can be negative)
   urgencyScore: number; // Final priority score for sorting
   basePriority: number; // (Goal.Priority + Project.Priority) × 10
   urgencyBoost: number; // Deadline-based boost
@@ -61,6 +62,9 @@ export interface TodayListItem {
   projectName: string;
   goalName: string;
   urgencyScore: number;
+  basePriority: number; // For secondary sort when latestStartDate is same
+  latestStartDate?: number; // Days from today when task MUST begin (undefined = no deadline)
+  cumulativeSlack?: number; // Slack based on total work of all sibling tasks with same deadline
   statusIndicator: '🔴' | '🟡' | '🟢' | '⚪'; // at risk, tight, on track, no deadline
   slack?: number;
   expectedCompletion?: string;
