@@ -15,7 +15,7 @@ export default function ProjectsTab() {
   const taskFinishData = useMemo(() => {
     const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
 
-    // Calculate cumulative finish dates
+    // Calculate cumulative finish dates for leaf tasks
     let cumulativeDate = new Date();
     const finishMap = new Map<string, { finishDate: Date; statusIndicator: '🔴' | '🟡' | '🟢' | '⚪' }>();
 
@@ -46,6 +46,69 @@ export default function ProjectsTab() {
       }
 
       finishMap.set(item.task.id, { finishDate, statusIndicator });
+    });
+
+    // Calculate finish dates for parent tasks (Groups)
+    // A parent's finish date is the max finish date of all its leaf descendants
+    const getLeafDescendants = (taskId: string): Task[] => {
+      const children = tasks.filter(t => t.parentTaskId === taskId);
+      if (children.length === 0) return [];
+
+      let leaves: Task[] = [];
+      for (const child of children) {
+        if (isLeaf(child.id, tasks)) {
+          leaves.push(child);
+        } else {
+          leaves = leaves.concat(getLeafDescendants(child.id));
+        }
+      }
+      return leaves;
+    };
+
+    // Process all parent tasks
+    const parentTasks = tasks.filter(t => !isLeaf(t.id, tasks));
+    parentTasks.forEach(parent => {
+      const leafDescendants = getLeafDescendants(parent.id);
+      if (leafDescendants.length === 0) return;
+
+      // Find the max finish date among all leaf descendants
+      const descendantFinishDates = leafDescendants
+        .map(leaf => finishMap.get(leaf.id)?.finishDate)
+        .filter((date): date is Date => date !== undefined);
+
+      if (descendantFinishDates.length === 0) return;
+
+      const maxFinishDate = new Date(Math.max(...descendantFinishDates.map(d => d.getTime())));
+
+      // Get parent's effective due date
+      const getEffectiveDueDate = (task: Task): string | undefined => {
+        if (task.dueDate) return task.dueDate;
+        if (task.parentTaskId) {
+          const parentTask = tasks.find(t => t.id === task.parentTaskId);
+          if (parentTask) return getEffectiveDueDate(parentTask);
+        }
+        return undefined;
+      };
+
+      const parentDueDate = getEffectiveDueDate(parent);
+      let parentStatusIndicator: '🔴' | '🟡' | '🟢' | '⚪' = '⚪';
+
+      if (parentDueDate) {
+        const dueDate = new Date(parentDueDate);
+        const daysUntilDue = Math.floor((dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+        const daysUntilFinish = Math.floor((maxFinishDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+        const actualSlack = daysUntilDue - daysUntilFinish;
+
+        if (actualSlack < 0) {
+          parentStatusIndicator = '🔴'; // At risk
+        } else if (actualSlack <= 2) {
+          parentStatusIndicator = '🟡'; // Tight
+        } else {
+          parentStatusIndicator = '🟢'; // On track
+        }
+      }
+
+      finishMap.set(parent.id, { finishDate: maxFinishDate, statusIndicator: parentStatusIndicator });
     });
 
     return finishMap;
