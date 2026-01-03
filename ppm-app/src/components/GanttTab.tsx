@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { addDays, differenceInCalendarDays, format, startOfDay } from 'date-fns';
 import { useStore } from '../store';
 import { isLeaf } from '../utils/taskTree';
+import { generateTodaysList } from '../utils/prioritization';
 
 const TIMELINE_DAYS = 30;
 
@@ -23,7 +24,7 @@ type ProjectSchedule = {
 };
 
 export default function GanttTab() {
-  const { projects, tasks, settings } = useStore();
+  const { goals, projects, tasks, settings } = useStore();
   const timelineStart = startOfDay(new Date());
   const timelineEnd = addDays(timelineStart, TIMELINE_DAYS);
 
@@ -33,41 +34,45 @@ export default function GanttTab() {
   );
 
   const projectSchedules = useMemo<ProjectSchedule[]>(() => {
+    const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
+    const scheduleMap = new Map<string, ScheduledTask[]>();
+    let cursor = timelineStart;
+
+    todaysList.forEach((item) => {
+      const hoursForTask = item.task.estHours || 0;
+      const durationDays = Math.ceil(hoursForTask / settings.dailyCadence);
+      const start = cursor;
+      const end = addDays(start, durationDays);
+      cursor = end;
+
+      const scheduledTask: ScheduledTask = {
+        id: item.task.id,
+        name: item.task.name,
+        start,
+        end,
+        done: item.task.done,
+        estHours: item.task.estHours,
+      };
+
+      const bucket = scheduleMap.get(item.task.projectId) ?? [];
+      bucket.push(scheduledTask);
+      scheduleMap.set(item.task.projectId, bucket);
+    });
+
     return projects.map((project) => {
       const projectTasks = tasks
         .filter((task) => task.projectId === project.id)
-        .filter((task) => isLeaf(task.id, tasks))
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-
-      let cursor = timelineStart;
-      const scheduledTasks = projectTasks.map((task) => {
-        const durationDays = Math.max(
-          1,
-          Math.ceil((task.estHours ?? settings.dailyCadence) / settings.dailyCadence)
-        );
-        const start = cursor;
-        const end = addDays(start, durationDays);
-        cursor = end;
-
-        return {
-          id: task.id,
-          name: task.name,
-          start,
-          end,
-          done: task.done,
-          estHours: task.estHours,
-        };
-      });
+        .filter((task) => isLeaf(task.id, tasks));
 
       return {
         id: project.id,
         name: project.name,
-        tasks: scheduledTasks,
+        tasks: scheduleMap.get(project.id) ?? [],
         completedTasks: projectTasks.filter((task) => task.done).length,
         totalTasks: projectTasks.length,
       };
     });
-  }, [projects, tasks, settings.dailyCadence, timelineStart]);
+  }, [goals, projects, tasks, settings.dailyCadence, timelineStart]);
 
   const renderBar = (task: ScheduledTask) => {
     if (task.end <= timelineStart || task.start >= timelineEnd) {
