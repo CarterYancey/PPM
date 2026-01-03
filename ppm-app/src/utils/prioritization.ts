@@ -407,33 +407,19 @@ export function generateTodaysList(
   //    - These are tasks that need to start soon to meet their deadlines
   //    - Higher priority tasks should not be delayed by lower priority ones
   //
-  // 2. NON-URGENT tasks (cumulativeSlack > threshold): sorted by DEADLINE (earlier first)
+  // 2. NON-URGENT tasks (cumulativeSlack > threshold OR no deadline): sorted by PRIORITY (higher first)
   //    - These have plenty of slack and should not preempt urgent tasks
-  //    - Among non-urgent tasks, earlier deadlines come first
-  //
-  // 3. Tasks WITHOUT deadlines: go LAST, sorted by priority
+  //    - Among non-urgent tasks, higher priority comes first (they have flexibility)
+  //    - Tasks with no deadline are treated the same as non-urgent tasks
   //
   // This ensures:
   // - Higher priority tasks are protected from slipping when deadlines are tight
   // - Higher priority tasks with lots of slack don't unnecessarily preempt urgent lower-priority work
+  // - Higher priority tasks without deadlines aren't pushed behind low-priority non-urgent work
   todaysList.sort((a, b) => {
-    const aHasDeadline = a.cumulativeSlack !== undefined;
-    const bHasDeadline = b.cumulativeSlack !== undefined;
-
-    // Tasks without deadlines go last
-    if (aHasDeadline && !bHasDeadline) return -1;
-    if (!aHasDeadline && bHasDeadline) return 1;
-    if (!aHasDeadline && !bHasDeadline) {
-      // Both have no deadline - sort by priority (higher first)
-      if (a.basePriority !== b.basePriority) {
-        return b.basePriority - a.basePriority;
-      }
-      return a.task.sortOrder - b.task.sortOrder;
-    }
-
-    // Determine urgency based on cumulative slack
-    const aIsUrgent = a.cumulativeSlack! <= URGENCY_SLACK_THRESHOLD;
-    const bIsUrgent = b.cumulativeSlack! <= URGENCY_SLACK_THRESHOLD;
+    // Determine urgency: urgent = has deadline AND cumulative slack <= threshold
+    const aIsUrgent = a.cumulativeSlack !== undefined && a.cumulativeSlack <= URGENCY_SLACK_THRESHOLD;
+    const bIsUrgent = b.cumulativeSlack !== undefined && b.cumulativeSlack <= URGENCY_SLACK_THRESHOLD;
 
     // Urgent tasks come before non-urgent tasks
     if (aIsUrgent && !bIsUrgent) return -1;
@@ -445,22 +431,31 @@ export function generateTodaysList(
       if (a.basePriority !== b.basePriority) {
         return b.basePriority - a.basePriority;
       }
-      // Same priority - earlier deadline first
+      // Same priority - earlier deadline first (lower slack = more urgent)
       if (a.cumulativeSlack !== b.cumulativeSlack) {
         return a.cumulativeSlack! - b.cumulativeSlack!;
       }
       return a.task.sortOrder - b.task.sortOrder;
     }
 
-    // Both are non-urgent - sort by DEADLINE (earlier cumulative slack first)
-    // This ensures we still meet deadlines but don't preempt unnecessarily
-    if (a.cumulativeSlack !== b.cumulativeSlack) {
-      return a.cumulativeSlack! - b.cumulativeSlack!;
-    }
-    // Same slack - higher priority wins
+    // Both are non-urgent (either high slack or no deadline)
+    // Sort by PRIORITY (higher first) since they all have flexibility
     if (a.basePriority !== b.basePriority) {
       return b.basePriority - a.basePriority;
     }
+
+    // Same priority - tasks with deadlines come before tasks without
+    // (among same priority, prefer to get deadline work done)
+    const aHasDeadline = a.cumulativeSlack !== undefined;
+    const bHasDeadline = b.cumulativeSlack !== undefined;
+    if (aHasDeadline && !bHasDeadline) return -1;
+    if (!aHasDeadline && bHasDeadline) return 1;
+
+    // Both have deadlines or both don't - use slack as tiebreaker if available
+    if (aHasDeadline && bHasDeadline && a.cumulativeSlack !== b.cumulativeSlack) {
+      return a.cumulativeSlack! - b.cumulativeSlack!;
+    }
+
     return a.task.sortOrder - b.task.sortOrder;
   });
 
