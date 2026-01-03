@@ -31,6 +31,8 @@ interface AppStore extends AppState {
 
 const defaultSettings: Settings = {
   dailyCadence: 2,
+  workDays: [1, 2, 3, 4, 5],
+  vacationDates: [],
 };
 
 export const useStore = create<AppStore>()(
@@ -199,7 +201,7 @@ export const useStore = create<AppStore>()(
             goals: data.goals || [],
             projects: data.projects || [],
             tasks: data.tasks || [],
-            settings: data.settings || defaultSettings,
+            settings: { ...defaultSettings, ...data.settings },
           });
         } catch (error) {
           console.error('Failed to import data:', error);

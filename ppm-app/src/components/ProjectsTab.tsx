@@ -13,7 +13,7 @@ export default function ProjectsTab() {
 
   // Generate today's list with cumulative finish dates (same logic as TodaysListTab)
   const taskFinishData = useMemo(() => {
-    const todaysList = generateTodaysList(tasks, goals, projects, settings.dailyCadence);
+    const todaysList = generateTodaysList(tasks, goals, projects, settings);
 
     // Calculate cumulative finish dates for leaf tasks
     let cumulativeDate = new Date();
