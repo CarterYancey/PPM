@@ -45,67 +45,65 @@ export default function GanttChartTab() {
   const ganttItems = useMemo(() => {
     const items: GanttItem[] = [];
 
-    // Get all projects and their tasks
-    projects.forEach((project) => {
-      const projectTasks = tasks.filter((t) => t.projectId === project.id);
+    // Get all root tasks from all projects
+    const allRootTasks = tasks
+      .filter((t) => !t.parentTaskId)
+      .sort((a, b) => {
+        const aSchedule = taskScheduleData.get(a.id);
+        const bSchedule = taskScheduleData.get(b.id);
+        if (!aSchedule || !bSchedule) return 0;
+        return aSchedule.startDate.getTime() - bSchedule.startDate.getTime();
+      });
 
-      // Build task tree for this project
-      const projectRootTasks = projectTasks
-        .filter((t) => !t.parentTaskId)
-        .sort((a, b) => {
-          const aSchedule = taskScheduleData.get(a.id);
-          const bSchedule = taskScheduleData.get(b.id);
-          if (!aSchedule || !bSchedule) return 0;
-          return aSchedule.startDate.getTime() - bSchedule.startDate.getTime();
-        });
+    const processTaskNode = (task: Task, level: number) => {
+      const taskIsLeaf = isLeaf(task.id, tasks);
 
-      const processTaskNode = (task: Task, level: number) => {
-        const taskIsLeaf = isLeaf(task.id, tasks);
+      // Skip completed leaf tasks
+      if (taskIsLeaf && task.done) {
+        return;
+      }
 
-        // Skip completed leaf tasks
-        if (taskIsLeaf && task.done) {
-          return;
-        }
+      // Get scheduling data from centralized source
+      const scheduleData = taskScheduleData.get(task.id);
 
-        // Get scheduling data from centralized source
-        const scheduleData = taskScheduleData.get(task.id);
+      if (!scheduleData) {
+        // Task has no schedule data (shouldn't happen for active tasks)
+        return;
+      }
 
-        if (!scheduleData) {
-          // Task has no schedule data (shouldn't happen for active tasks)
-          return;
-        }
+      // Find the project for this task
+      const taskProject = projects.find((p) => p.id === task.projectId);
 
-        items.push({
-          id: task.id,
-          name: task.name,
-          type: 'task',
-          level: level,
-          startDate: scheduleData.startDate,
-          endDate: scheduleData.finishDate,
-          dueDate: scheduleData.effectiveDueDate ? parseISO(scheduleData.effectiveDueDate) : undefined,
-          completionPercentage: taskIsLeaf ? (task.done ? 100 : 0) : calculateTaskCompletion(task, tasks),
-          statusIndicator: scheduleData.statusIndicator,
-          task,
-          project,
-          isLeaf: taskIsLeaf,
-          hoursRemaining: scheduleData.hoursRemaining,
-        });
+      items.push({
+        id: task.id,
+        name: task.name,
+        type: 'task',
+        level: level,
+        startDate: scheduleData.startDate,
+        endDate: scheduleData.finishDate,
+        dueDate: scheduleData.effectiveDueDate ? parseISO(scheduleData.effectiveDueDate) : undefined,
+        completionPercentage: taskIsLeaf ? (task.done ? 100 : 0) : calculateTaskCompletion(task, tasks),
+        statusIndicator: scheduleData.statusIndicator,
+        task,
+        project: taskProject,
+        isLeaf: taskIsLeaf,
+        hoursRemaining: scheduleData.hoursRemaining,
+      });
 
-        // Process children - sort by start date
-        if (!taskIsLeaf) {
-          const children = getChildren(task.id, tasks)
-            .sort((a, b) => {
-              const aSchedule = taskScheduleData.get(a.id);
-              const bSchedule = taskScheduleData.get(b.id);
-              if (!aSchedule || !bSchedule) return 0;
-              return aSchedule.startDate.getTime() - bSchedule.startDate.getTime();
-            });
-          children.forEach((child) => processTaskNode(child, level + 1));
-        }
-      };
+      // Process children - sort by start date
+      if (!taskIsLeaf) {
+        const children = getChildren(task.id, tasks)
+          .sort((a, b) => {
+            const aSchedule = taskScheduleData.get(a.id);
+            const bSchedule = taskScheduleData.get(b.id);
+            if (!aSchedule || !bSchedule) return 0;
+            return aSchedule.startDate.getTime() - bSchedule.startDate.getTime();
+          });
+        children.forEach((child) => processTaskNode(child, level + 1));
+      }
+    };
 
-      projectRootTasks.forEach((task) => processTaskNode(task, 0));
-    });
+    allRootTasks.forEach((task) => processTaskNode(task, 0));
 
     return items;
   }, [projects, tasks, taskScheduleData, today]);
