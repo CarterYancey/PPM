@@ -52,7 +52,12 @@ export default function GanttChartTab() {
       // Build task tree for this project
       const projectRootTasks = projectTasks
         .filter((t) => !t.parentTaskId)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
+        .sort((a, b) => {
+          const aSchedule = taskScheduleData.get(a.id);
+          const bSchedule = taskScheduleData.get(b.id);
+          if (!aSchedule || !bSchedule) return 0;
+          return aSchedule.startDate.getTime() - bSchedule.startDate.getTime();
+        });
 
       const processTaskNode = (task: Task, level: number) => {
         const taskIsLeaf = isLeaf(task.id, tasks);
@@ -86,9 +91,15 @@ export default function GanttChartTab() {
           hoursRemaining: scheduleData.hoursRemaining,
         });
 
-        // Process children
+        // Process children - sort by start date
         if (!taskIsLeaf) {
-          const children = getChildren(task.id, tasks);
+          const children = getChildren(task.id, tasks)
+            .sort((a, b) => {
+              const aSchedule = taskScheduleData.get(a.id);
+              const bSchedule = taskScheduleData.get(b.id);
+              if (!aSchedule || !bSchedule) return 0;
+              return aSchedule.startDate.getTime() - bSchedule.startDate.getTime();
+            });
           children.forEach((child) => processTaskNode(child, level + 1));
         }
       };
