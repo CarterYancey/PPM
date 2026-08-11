@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useStore } from '../store';
+import { nextId, useStore } from '../store';
 import type { Goal } from '../types';
 import { format } from 'date-fns';
+import { parseCalendarDate } from '../utils/dates';
 
 function getPriorityColor(priority: number): string {
   if (priority === 0) return 'bg-gray-100 text-gray-800';
@@ -22,15 +23,7 @@ export default function GoalsTab() {
     notes: undefined,
   });
 
-  const sortedGoals = [...goals].sort((a, b) => b.priority - a.priority);
-
-  const generateNextId = () => {
-    const maxId = goals.reduce((max, g) => {
-      const num = parseInt(g.id.substring(1));
-      return num > max ? num : max;
-    }, 0);
-    return `G${maxId + 1}`;
-  };
+  const sortedGoals = [...goals].sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +31,7 @@ export default function GoalsTab() {
       updateGoal(editingId, formData);
       setEditingId(null);
     } else {
-      addGoal({ id: generateNextId(), ...formData });
+      addGoal({ id: nextId(goals, 'G'), ...formData });
       setIsAdding(false);
     }
     setFormData({ name: '', priority: 5, targetDate: undefined, notes: undefined });
@@ -66,7 +59,7 @@ export default function GoalsTab() {
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Goals</h2>
           <p className="text-sm text-gray-600 mt-1">
-            High-level objectives with Fibonacci priorities
+What you are working toward, and how much each one is worth
           </p>
         </div>
         {!isAdding && !editingId && (
@@ -105,12 +98,12 @@ export default function GoalsTab() {
                 required
                 min="0"
                 value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
+                onChange={(e) => setFormData({ ...formData, priority: Math.max(0, Number(e.target.value) || 0) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
                 placeholder="e.g., 0, 1, 2, 3, 5, 8, 13, 21, 34..."
               />
               <p className="text-xs text-gray-500 mt-1">
-                Suggested: 0=Paused, 1-5=Low, 8-13=Medium, 21+=High
+Fibonacci scale. 0 pauses the goal and everything under it.
               </p>
             </div>
 
@@ -178,7 +171,7 @@ export default function GoalsTab() {
                   {goal.targetDate && (
                     <span>
                       <span className="font-medium">Target:</span>{' '}
-                      {format(new Date(goal.targetDate), 'MMM d, yyyy')}
+                      {format(parseCalendarDate(goal.targetDate), 'MMM d, yyyy')}
                     </span>
                   )}
                   {goal.notes && (

@@ -1,416 +1,215 @@
 import { useMemo, useState } from 'react';
+import { format } from 'date-fns';
 import { useStore } from '../store';
-import { format, addDays, startOfDay, parseISO } from 'date-fns';
-import { isLeaf, getChildren } from '../utils/taskTree';
-import { getTaskScheduleData, type StatusIndicator } from '../utils/scheduling';
-import type { Task, Goal, Project } from '../types';
+import { getChildren, getLeaves, isLeaf } from '../utils/taskTree';
+import { completionPercentage, STATUS_EMOJI, type ScheduleStatus } from '../utils/schedule';
+import { calendarDaysBetween, dateForDayOffset, parseCalendarDate } from '../utils/dates';
+import { useSchedule } from '../hooks/useSchedule';
+
+type ViewMode = '2weeks' | '1month' | '3months';
+const DAYS_SHOWN: Record<ViewMode, number> = { '2weeks': 14, '1month': 30, '3months': 90 };
 
 interface GanttItem {
-  id: string;
+  key: string;
   name: string;
   type: 'goal' | 'project' | 'task';
   level: number;
-  startDate: Date;
-  endDate: Date;
-  dueDate?: Date;
+  /** Day offsets from today. */
+  startDay: number;
+  finishDay: number;
+  dueDay?: number;
   completionPercentage: number;
-  statusIndicator: StatusIndicator;
-  goal?: Goal;
-  project?: Project;
-  task?: Task;
-  isLeaf: boolean;
+  status: ScheduleStatus;
   hoursRemaining: number;
+  collapsibleId?: string;
 }
 
 export default function GanttChartTab() {
-  const { goals, projects, tasks, settings } = useStore();
+  const goals = useStore((s) => s.goals);
+  const projects = useStore((s) => s.projects);
+  const tasks = useStore((s) => s.tasks);
+  const schedule = useSchedule();
+
   const [collapsedGoals, setCollapsedGoals] = useState<Set<string>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'2weeks' | '1month' | '3months'>('1month');
+  const [viewMode, setViewMode] = useState<ViewMode>('1month');
 
-  const today = startOfDay(new Date());
+  const daysShown = DAYS_SHOWN[viewMode];
+  const { index, today } = schedule;
 
-  // Get centralized scheduling data - single source of truth
-  const taskScheduleData = useMemo(() => {
-    return getTaskScheduleData(tasks, goals, projects, settings.dailyCadence);
-  }, [tasks, goals, projects, settings.dailyCadence]);
-
-  // Calculate timeline range based on view mode
-  const timelineRange = useMemo(() => {
-    const daysToShow = viewMode === '2weeks' ? 14 : viewMode === '1month' ? 30 : 90;
-    const startDate = today;
-    const endDate = addDays(today, daysToShow);
-    return { startDate, endDate, daysToShow };
-  }, [viewMode, today]);
-
-  // Build Gantt items using centralized scheduling data
   const ganttItems = useMemo(() => {
     const items: GanttItem[] = [];
+    const dueDayOf = (iso?: string) =>
+      iso ? calendarDaysBetween(today, parseCalendarDate(iso)) : undefined;
 
-    // Sort goals by priority (higher priority first)
-    const sortedGoals = [...goals].sort((a, b) => b.priority - a.priority);
+    const sortedGoals = [...goals].sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
 
-    sortedGoals.forEach((goal) => {
-      // Get projects for this goal, sorted by priority
+    for (const goal of sortedGoals) {
       const goalProjects = projects
         .filter((p) => p.goalId === goal.id)
-        .sort((a, b) => b.priority - a.priority);
+        .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+      if (goalProjects.length === 0) continue;
 
-      if (goalProjects.length === 0) return;
+      const projectIds = new Set(goalProjects.map((p) => p.id));
+      const goalLeaves = tasks.filter((t) => projectIds.has(t.projectId) && isLeaf(index, t.id));
+      const goalActive = goalLeaves
+        .filter((t) => !t.done)
+        .map((t) => schedule.byTaskId.get(t.id))
+        .filter((e) => e !== undefined);
 
-      // Calculate goal-level metrics from task schedules
-      const goalTasks = tasks.filter((t) => goalProjects.some((p) => p.id === t.projectId));
-      const goalLeafTasks = goalTasks.filter((t) => isLeaf(t.id, tasks) && !t.done);
-
-      // Get schedule data for goal tasks
-      const goalSchedules = goalLeafTasks
-        .map((t) => taskScheduleData.get(t.id))
-        .filter((s) => s !== undefined);
-
-      // Calculate goal's start/end dates from its tasks
-      let goalStart = today;
-      let goalEnd = today;
-      let goalHoursRemaining = 0;
-
-      if (goalSchedules.length > 0) {
-        const startDates = goalSchedules.map((s) => s.startDate.getTime());
-        const endDates = goalSchedules.map((s) => s.finishDate.getTime());
-        goalStart = new Date(Math.min(...startDates));
-        goalEnd = new Date(Math.max(...endDates));
-        goalHoursRemaining = goalSchedules.reduce((sum, s) => sum + s.hoursRemaining, 0);
-      }
-
-      // Goal item
       items.push({
-        id: goal.id,
+        key: goal.id,
         name: goal.name,
         type: 'goal',
         level: 0,
-        startDate: goalStart,
-        endDate: goalEnd,
-        dueDate: goal.targetDate ? parseISO(goal.targetDate) : undefined,
-        completionPercentage: calculateGoalCompletion(goal, goalProjects, tasks),
-        statusIndicator: '⚪',
-        goal,
-        isLeaf: false,
-        hoursRemaining: goalHoursRemaining,
+        startDay: goalActive.length ? Math.min(...goalActive.map((e) => e.startDay)) : 0,
+        finishDay: goalActive.length ? Math.max(...goalActive.map((e) => e.finishDay)) : 0,
+        dueDay: dueDayOf(goal.targetDate),
+        completionPercentage: completionPercentage(goalLeaves),
+        status: 'nodeadline',
+        hoursRemaining: goalActive.reduce((sum, e) => sum + e.hours, 0),
+        collapsibleId: goal.id,
       });
 
-      if (collapsedGoals.has(goal.id)) {
-        return;
-      }
+      if (collapsedGoals.has(goal.id)) continue;
 
-      goalProjects.forEach((project) => {
+      for (const project of goalProjects) {
         const projectTasks = tasks.filter((t) => t.projectId === project.id);
-        const projectLeafTasks = projectTasks.filter((t) => isLeaf(t.id, tasks) && !t.done);
+        const projectLeaves = projectTasks.filter((t) => isLeaf(index, t.id));
+        const projectActive = projectLeaves
+          .filter((t) => !t.done)
+          .map((t) => schedule.byTaskId.get(t.id))
+          .filter((e) => e !== undefined);
 
-        // Get schedule data for project tasks
-        const projectSchedules = projectLeafTasks
-          .map((t) => taskScheduleData.get(t.id))
-          .filter((s) => s !== undefined);
-
-        // Calculate project's start/end dates from its tasks
-        let projectStart = today;
-        let projectEnd = today;
-        let projectHoursRemaining = 0;
-
-        if (projectSchedules.length > 0) {
-          const startDates = projectSchedules.map((s) => s.startDate.getTime());
-          const endDates = projectSchedules.map((s) => s.finishDate.getTime());
-          projectStart = new Date(Math.min(...startDates));
-          projectEnd = new Date(Math.max(...endDates));
-          projectHoursRemaining = projectSchedules.reduce((sum, s) => sum + s.hoursRemaining, 0);
-        }
-
-        // Project item
         items.push({
-          id: project.id,
+          key: project.id,
           name: project.name,
           type: 'project',
           level: 1,
-          startDate: projectStart,
-          endDate: projectEnd,
-          dueDate: project.dueDate ? parseISO(project.dueDate) : undefined,
-          completionPercentage: calculateProjectCompletion(project, tasks),
-          statusIndicator: '⚪',
-          project,
-          goal,
-          isLeaf: false,
-          hoursRemaining: projectHoursRemaining,
+          startDay: projectActive.length ? Math.min(...projectActive.map((e) => e.startDay)) : 0,
+          finishDay: projectActive.length ? Math.max(...projectActive.map((e) => e.finishDay)) : 0,
+          dueDay: dueDayOf(project.dueDate),
+          completionPercentage: completionPercentage(projectLeaves),
+          status: 'nodeadline',
+          hoursRemaining: projectActive.reduce((sum, e) => sum + e.hours, 0),
+          collapsibleId: project.id,
         });
 
-        if (collapsedProjects.has(project.id)) {
-          return;
-        }
+        if (collapsedProjects.has(project.id)) continue;
 
-        // Build task tree for this project
-        const projectRootTasks = projectTasks
-          .filter((t) => !t.parentTaskId)
-          .sort((a, b) => a.sortOrder - b.sortOrder);
-
-        const processTaskNode = (task: Task, level: number) => {
-          const taskIsLeaf = isLeaf(task.id, tasks);
-
-          // Skip completed leaf tasks
-          if (taskIsLeaf && task.done) {
-            return;
-          }
-
-          // Get scheduling data from centralized source
-          const scheduleData = taskScheduleData.get(task.id);
-
-          if (!scheduleData) {
-            // Task has no schedule data (shouldn't happen for active tasks)
-            return;
-          }
+        const walk = (taskId: string, level: number) => {
+          const task = index.byId.get(taskId);
+          const entry = schedule.byTaskId.get(taskId);
+          if (!task || !entry || entry.status === 'done') return;
 
           items.push({
-            id: task.id,
+            key: task.id,
             name: task.name,
             type: 'task',
             level: level + 2,
-            startDate: scheduleData.startDate,
-            endDate: scheduleData.finishDate,
-            dueDate: scheduleData.effectiveDueDate ? parseISO(scheduleData.effectiveDueDate) : undefined,
-            completionPercentage: taskIsLeaf ? (task.done ? 100 : 0) : calculateTaskCompletion(task, tasks),
-            statusIndicator: scheduleData.statusIndicator,
-            task,
-            project,
-            goal,
-            isLeaf: taskIsLeaf,
-            hoursRemaining: scheduleData.hoursRemaining,
+            startDay: entry.startDay,
+            finishDay: entry.finishDay,
+            dueDay: entry.dueDay,
+            completionPercentage: entry.isLeaf ? 0 : completionPercentage(getLeaves(index, task.id)),
+            status: entry.status,
+            hoursRemaining: entry.hours,
           });
 
-          // Process children
-          if (!taskIsLeaf) {
-            const children = getChildren(task.id, tasks);
-            children.forEach((child) => processTaskNode(child, level + 1));
-          }
+          for (const child of getChildren(index, task.id)) walk(child.id, level + 1);
         };
 
-        projectRootTasks.forEach((task) => processTaskNode(task, 0));
-      });
-    });
-
-    return items;
-  }, [goals, projects, tasks, taskScheduleData, collapsedGoals, collapsedProjects, today]);
-
-  // Helper functions
-  function calculateGoalCompletion(_goal: Goal, goalProjects: Project[], allTasks: Task[]): number {
-    const goalTasks = allTasks.filter((t) => goalProjects.some((p) => p.id === t.projectId));
-    const leafTasks = goalTasks.filter((t) => isLeaf(t.id, allTasks));
-    if (leafTasks.length === 0) return 0;
-
-    const totalHours = leafTasks.reduce((sum, t) => sum + (t.estHours || 0), 0);
-    if (totalHours === 0) return 0;
-
-    const completedHours = leafTasks
-      .filter((t) => t.done)
-      .reduce((sum, t) => sum + (t.estHours || 0), 0);
-
-    return Math.round((completedHours / totalHours) * 100);
-  }
-
-  function calculateProjectCompletion(project: Project, allTasks: Task[]): number {
-    const projectTasks = allTasks.filter((t) => t.projectId === project.id);
-    const leafTasks = projectTasks.filter((t) => isLeaf(t.id, allTasks));
-    if (leafTasks.length === 0) return 0;
-
-    const totalHours = leafTasks.reduce((sum, t) => sum + (t.estHours || 0), 0);
-    if (totalHours === 0) return 0;
-
-    const completedHours = leafTasks
-      .filter((t) => t.done)
-      .reduce((sum, t) => sum + (t.estHours || 0), 0);
-
-    return Math.round((completedHours / totalHours) * 100);
-  }
-
-  function calculateTaskCompletion(task: Task, allTasks: Task[]): number {
-    const getLeafDescendants = (taskId: string): Task[] => {
-      const children = allTasks.filter((t) => t.parentTaskId === taskId);
-      if (children.length === 0) return [];
-
-      let leaves: Task[] = [];
-      for (const child of children) {
-        if (isLeaf(child.id, allTasks)) {
-          leaves.push(child);
-        } else {
-          leaves = leaves.concat(getLeafDescendants(child.id));
+        for (const root of projectTasks.filter((t) => !index.parentOf.get(t.id))) {
+          walk(root.id, 0);
         }
       }
-      return leaves;
-    };
-
-    const leafDescendants = getLeafDescendants(task.id);
-    if (leafDescendants.length === 0) return 0;
-
-    const totalHours = leafDescendants.reduce((sum, t) => sum + (t.estHours || 0), 0);
-    if (totalHours === 0) return 0;
-
-    const completedHours = leafDescendants
-      .filter((t) => t.done)
-      .reduce((sum, t) => sum + (t.estHours || 0), 0);
-
-    return Math.round((completedHours / totalHours) * 100);
-  }
-
-  // Calculate bar position and width
-  const getBarStyle = (item: GanttItem) => {
-    const { startDate, endDate } = timelineRange;
-    const timelineStart = startDate.getTime();
-    const timelineEnd = endDate.getTime();
-    const timelineWidth = timelineEnd - timelineStart;
-
-    const itemStart = Math.max(item.startDate.getTime(), timelineStart);
-    const itemEnd = Math.min(item.endDate.getTime(), timelineEnd);
-
-    if (itemEnd < timelineStart || itemStart > timelineEnd) {
-      return null; // Item is outside visible range
     }
 
-    const left = ((itemStart - timelineStart) / timelineWidth) * 100;
-    const width = Math.max(((itemEnd - itemStart) / timelineWidth) * 100, 1);
+    return items;
+  }, [goals, projects, tasks, schedule, index, today, collapsedGoals, collapsedProjects]);
 
+  /** Position a day-offset span within the visible window, or null if it falls outside. */
+  const spanStyle = (startDay: number, finishDay: number) => {
+    if (finishDay < 0 || startDay > daysShown) return null;
+    const clampedStart = Math.max(startDay, 0);
+    const clampedEnd = Math.min(finishDay + 1, daysShown); // bars cover whole days
+    const left = (clampedStart / daysShown) * 100;
+    const width = Math.max(((clampedEnd - clampedStart) / daysShown) * 100, 0.75);
     return { left: `${left}%`, width: `${width}%` };
   };
 
-  // Get due date marker position
-  const getDueDateStyle = (dueDate: Date) => {
-    const { startDate, endDate } = timelineRange;
-    const timelineStart = startDate.getTime();
-    const timelineEnd = endDate.getTime();
-    const timelineWidth = timelineEnd - timelineStart;
+  const markerStyle = (day: number) =>
+    day < 0 || day > daysShown ? null : { left: `${(day / daysShown) * 100}%` };
 
-    const dueDateMs = dueDate.getTime();
-    if (dueDateMs < timelineStart || dueDateMs > timelineEnd) {
-      return null;
-    }
-
-    const left = ((dueDateMs - timelineStart) / timelineWidth) * 100;
-    return { left: `${left}%` };
-  };
-
-  // Get today line position
-  const getTodayLinePosition = () => {
-    const { startDate, endDate } = timelineRange;
-    const timelineStart = startDate.getTime();
-    const timelineEnd = endDate.getTime();
-    const timelineWidth = timelineEnd - timelineStart;
-
-    const todayMs = today.getTime();
-    if (todayMs < timelineStart || todayMs > timelineEnd) {
-      return null;
-    }
-
-    const left = ((todayMs - timelineStart) / timelineWidth) * 100;
-    return `${left}%`;
-  };
-
-  // Generate timeline headers
   const timelineHeaders = useMemo(() => {
-    const { startDate, daysToShow } = timelineRange;
-    const headers: { date: Date; label: string }[] = [];
-
     const step = viewMode === '3months' ? 7 : viewMode === '1month' ? 3 : 1;
-
-    for (let i = 0; i < daysToShow; i += step) {
-      const date = addDays(startDate, i);
-      headers.push({
-        date,
-        label: format(date, viewMode === '3months' ? 'MMM d' : 'MMM d'),
-      });
+    const headers: { day: number; label: string }[] = [];
+    for (let day = 0; day < daysShown; day += step) {
+      headers.push({ day, label: format(dateForDayOffset(day, today), 'MMM d') });
     }
-
     return headers;
-  }, [timelineRange, viewMode]);
+  }, [viewMode, daysShown, today]);
 
-  const getBarColor = (item: GanttItem) => {
+  const barColor = (item: GanttItem) => {
     if (item.type === 'goal') return 'bg-indigo-500';
     if (item.type === 'project') return 'bg-blue-500';
-
-    switch (item.statusIndicator) {
-      case '🔴': return 'bg-red-500';
-      case '🟡': return 'bg-yellow-500';
-      case '🟢': return 'bg-green-500';
-      default: return 'bg-gray-400';
+    switch (item.status) {
+      case 'late':
+        return 'bg-red-500';
+      case 'tight':
+        return 'bg-yellow-500';
+      case 'ontrack':
+        return 'bg-green-500';
+      default:
+        return 'bg-gray-400';
     }
   };
 
-  const toggleGoal = (goalId: string) => {
-    setCollapsedGoals((prev) => {
-      const next = new Set(prev);
-      if (next.has(goalId)) {
-        next.delete(goalId);
-      } else {
-        next.add(goalId);
-      }
-      return next;
-    });
+  const toggle = (set: Set<string>, id: string) => {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
   };
-
-  const toggleProject = (projectId: string) => {
-    setCollapsedProjects((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) {
-        next.delete(projectId);
-      } else {
-        next.add(projectId);
-      }
-      return next;
-    });
-  };
-
-  const todayLinePosition = getTodayLinePosition();
 
   if (goals.length === 0) {
     return (
-      <div className="p-6">
-        <div className="text-center py-12 text-gray-500">
-          <p className="text-lg mb-2">No goals yet</p>
-          <p className="text-sm">Create goals and projects to see your Gantt chart</p>
-        </div>
+      <div className="p-6 text-center py-12 text-gray-500">
+        <p className="text-lg mb-2">No goals yet</p>
+        <p className="text-sm">Create goals and projects to see your Gantt chart</p>
       </div>
     );
   }
 
+  const minColumnWidth = viewMode === '3months' ? '60px' : '40px';
+
   return (
     <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-2xl font-bold text-gray-900">Gantt Chart</h2>
-        <div className="flex items-center gap-4">
-          {/* Legend */}
+        <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-4 text-sm text-gray-600">
+            {[
+              ['bg-indigo-500', 'Goal'],
+              ['bg-blue-500', 'Project'],
+              ['bg-green-500', 'On Track'],
+              ['bg-yellow-500', 'Tight'],
+              ['bg-red-500', 'At Risk'],
+            ].map(([cls, label]) => (
+              <div key={label} className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded ${cls}`} />
+                <span>{label}</span>
+              </div>
+            ))}
             <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-indigo-500 rounded"></div>
-              <span>Goal</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-blue-500 rounded"></div>
-              <span>Project</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-green-500 rounded"></div>
-              <span>On Track</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-              <span>Tight</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-red-500 rounded"></div>
-              <span>At Risk</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-4 bg-orange-500"></div>
+              <div className="w-1 h-4 bg-orange-500" />
               <span>Due Date</span>
             </div>
           </div>
 
-          {/* View Mode Selector */}
           <select
             value={viewMode}
-            onChange={(e) => setViewMode(e.target.value as '2weeks' | '1month' | '3months')}
+            onChange={(e) => setViewMode(e.target.value as ViewMode)}
+            aria-label="Timeline range"
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="2weeks">2 Weeks</option>
@@ -420,71 +219,70 @@ export default function GanttChartTab() {
         </div>
       </div>
 
-      {/* Gantt Chart Container */}
       <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-        {/* Header Row */}
         <div className="flex border-b border-gray-200 bg-gray-50">
-          {/* Name Column Header */}
           <div className="w-72 flex-shrink-0 px-4 py-3 font-semibold text-gray-700 border-r border-gray-200">
             Task / Project / Goal
           </div>
-
-          {/* Timeline Headers */}
-          <div className="flex-1 relative">
-            <div className="flex">
-              {timelineHeaders.map((header, index) => (
-                <div
-                  key={index}
-                  className="flex-1 px-2 py-3 text-xs text-gray-500 text-center border-r border-gray-100 last:border-r-0"
-                  style={{ minWidth: viewMode === '3months' ? '60px' : '40px' }}
-                >
-                  {header.label}
-                </div>
-              ))}
-            </div>
+          <div className="flex-1 flex">
+            {timelineHeaders.map((header) => (
+              <div
+                key={header.day}
+                className="flex-1 px-2 py-3 text-xs text-gray-500 text-center border-r border-gray-100 last:border-r-0"
+                style={{ minWidth: minColumnWidth }}
+              >
+                {header.label}
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Rows */}
         <div className="max-h-[600px] overflow-y-auto">
           {ganttItems.map((item) => {
-            const barStyle = getBarStyle(item);
-            const dueDateStyle = item.dueDate ? getDueDateStyle(item.dueDate) : null;
+            const bar = spanStyle(item.startDay, item.finishDay);
+            const due = item.dueDay === undefined ? null : markerStyle(item.dueDay);
             const isGoal = item.type === 'goal';
             const isProject = item.type === 'project';
+            const collapsed = isGoal
+              ? collapsedGoals.has(item.key)
+              : collapsedProjects.has(item.key);
 
             return (
               <div
-                key={item.id}
+                key={item.key}
                 className={`flex border-b border-gray-100 hover:bg-gray-50 ${
                   isGoal ? 'bg-indigo-50' : isProject ? 'bg-blue-50' : ''
                 }`}
               >
-                {/* Name Column */}
                 <div
                   className="w-72 flex-shrink-0 px-4 py-2 border-r border-gray-200 flex items-center"
                   style={{ paddingLeft: `${item.level * 16 + 16}px` }}
                 >
-                  {/* Collapse/Expand Button */}
                   {(isGoal || isProject) && (
                     <button
-                      onClick={() => isGoal ? toggleGoal(item.id) : toggleProject(item.id)}
+                      onClick={() =>
+                        isGoal
+                          ? setCollapsedGoals((prev) => toggle(prev, item.key))
+                          : setCollapsedProjects((prev) => toggle(prev, item.key))
+                      }
+                      aria-expanded={!collapsed}
+                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${item.name}`}
                       className="mr-2 text-gray-400 hover:text-gray-600 w-4 h-4 flex items-center justify-center"
                     >
-                      {(isGoal ? collapsedGoals.has(item.id) : collapsedProjects.has(item.id)) ? '▶' : '▼'}
+                      {collapsed ? '▶' : '▼'}
                     </button>
                   )}
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      {item.type === 'task' && (
-                        <span className="text-sm">{item.statusIndicator}</span>
-                      )}
+                      {item.type === 'task' && <span className="text-sm">{STATUS_EMOJI[item.status]}</span>}
                       <span
                         className={`truncate ${
-                          isGoal ? 'font-bold text-indigo-900' :
-                          isProject ? 'font-semibold text-blue-900' :
-                          'text-gray-900'
+                          isGoal
+                            ? 'font-bold text-indigo-900'
+                            : isProject
+                              ? 'font-semibold text-blue-900'
+                              : 'text-gray-900'
                         }`}
                         title={item.name}
                       >
@@ -500,50 +298,43 @@ export default function GanttChartTab() {
                   </div>
                 </div>
 
-                {/* Timeline Column */}
                 <div className="flex-1 relative h-12">
-                  {/* Grid lines */}
                   <div className="absolute inset-0 flex">
-                    {timelineHeaders.map((_, index) => (
+                    {timelineHeaders.map((header) => (
                       <div
-                        key={index}
+                        key={header.day}
                         className="flex-1 border-r border-gray-100 last:border-r-0"
-                        style={{ minWidth: viewMode === '3months' ? '60px' : '40px' }}
-                      ></div>
+                        style={{ minWidth: minColumnWidth }}
+                      />
                     ))}
                   </div>
 
-                  {/* Today line */}
-                  {todayLinePosition && (
-                    <div
-                      className="absolute top-0 bottom-0 w-0.5 bg-blue-400 z-10"
-                      style={{ left: todayLinePosition }}
-                    ></div>
-                  )}
+                  <div className="absolute top-0 bottom-0 w-0.5 bg-blue-400 z-10" style={{ left: '0%' }} />
 
-                  {/* Task bar */}
-                  {barStyle && (
+                  {bar && (
                     <div
-                      className={`absolute top-2 h-8 ${getBarColor(item)} rounded opacity-80 hover:opacity-100 transition-opacity`}
-                      style={barStyle}
+                      className={`absolute top-2 h-8 ${barColor(item)} rounded opacity-80 hover:opacity-100 transition-opacity overflow-hidden`}
+                      style={bar}
+                      title={`${format(dateForDayOffset(item.startDay, today), 'MMM d')} – ${format(
+                        dateForDayOffset(item.finishDay, today),
+                        'MMM d'
+                      )}`}
                     >
-                      {/* Progress indicator */}
                       {item.completionPercentage > 0 && item.completionPercentage < 100 && (
                         <div
-                          className="absolute inset-0 bg-white opacity-40 rounded-r"
-                          style={{ left: `${item.completionPercentage}%` }}
-                        ></div>
+                          className="absolute inset-y-0 right-0 bg-white opacity-40"
+                          style={{ width: `${100 - item.completionPercentage}%` }}
+                        />
                       )}
                     </div>
                   )}
 
-                  {/* Due date marker */}
-                  {dueDateStyle && (
+                  {due && (
                     <div
                       className="absolute top-1 w-1 h-10 bg-orange-500 z-20"
-                      style={dueDateStyle}
-                      title={`Due: ${format(item.dueDate!, 'MMM d, yyyy')}`}
-                    ></div>
+                      style={due}
+                      title={`Due: ${format(dateForDayOffset(item.dueDay!, today), 'MMM d, yyyy')}`}
+                    />
                   )}
                 </div>
               </div>
@@ -552,30 +343,18 @@ export default function GanttChartTab() {
         </div>
       </div>
 
-      {/* Summary Stats */}
-      <div className="mt-6 grid grid-cols-4 gap-4">
-        <div className="bg-gray-50 rounded-lg p-4">
-          <div className="text-sm text-gray-500">Total Goals</div>
-          <div className="text-2xl font-bold text-gray-900">{goals.length}</div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-4">
-          <div className="text-sm text-gray-500">Total Projects</div>
-          <div className="text-2xl font-bold text-gray-900">{projects.length}</div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-4">
-          <div className="text-sm text-gray-500">Active Tasks</div>
-          <div className="text-2xl font-bold text-gray-900">
-            {tasks.filter((t) => isLeaf(t.id, tasks) && !t.done).length}
+      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          ['Total Goals', String(goals.length)],
+          ['Total Projects', String(projects.length)],
+          ['Active Tasks', String(schedule.queue.length)],
+          ['Hours Remaining', `${schedule.totalHours}h`],
+        ].map(([label, value]) => (
+          <div key={label} className="bg-gray-50 rounded-lg p-4">
+            <div className="text-sm text-gray-500">{label}</div>
+            <div className="text-2xl font-bold text-gray-900">{value}</div>
           </div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-4">
-          <div className="text-sm text-gray-500">Total Hours Remaining</div>
-          <div className="text-2xl font-bold text-gray-900">
-            {tasks
-              .filter((t) => isLeaf(t.id, tasks) && !t.done)
-              .reduce((sum, t) => sum + (t.estHours || 0), 0)}h
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );

@@ -1,8 +1,8 @@
 export interface Goal {
   id: string; // G1, G2, G3...
   name: string;
-  priority: number; // Any positive number (commonly Fibonacci: 0, 1, 2, 3, 5, 8, 13, 21, 34...)
-  targetDate?: string; // ISO date string
+  priority: number; // Non-negative; commonly Fibonacci (0, 1, 2, 3, 5, 8, 13, 21, 34...). 0 = paused.
+  targetDate?: string; // ISO calendar date
   notes?: string;
 }
 
@@ -10,8 +10,8 @@ export interface Project {
   id: string; // P1, P2, P3...
   name: string;
   goalId: string; // Reference to Goal.id
-  priority: number; // Any positive number
-  dueDate?: string; // ISO date string
+  priority: number; // Weight of this project *within* its goal. 0 = paused.
+  dueDate?: string; // ISO calendar date
 }
 
 export interface Task {
@@ -20,54 +20,33 @@ export interface Task {
   projectId: string; // Reference to Project.id
   parentTaskId?: string; // Reference to another Task.id
   sortOrder: number; // 1, 2, 3... defines sequence within parent
-  estHours?: number; // Only for leaf tasks (tasks without children)
-  dueDate?: string; // ISO date string
+  estHours?: number; // Only meaningful for leaf tasks (tasks without children)
+  dueDate?: string; // ISO calendar date
   done: boolean; // Only meaningful for leaf tasks
 }
 
+/**
+ * How a task's value is derived from its goal and project priority.
+ * - `multiplicative`: goal.priority x project.priority. Project priority is a
+ *   weight *within* the goal, which is how the spec describes it, and a paused
+ *   (0) goal correctly zeroes out everything under it.
+ * - `additive`: (goal.priority + project.priority) x 10. The original v1 rule,
+ *   kept so old lists can be reproduced.
+ */
+export type PriorityModel = 'multiplicative' | 'additive';
+
+/**
+ * How `sortOrder` is interpreted.
+ * - `strict`: a hard prerequisite. Within a project, work happens in tree order.
+ * - `soft`: a tie-break only. The scheduler may reorder siblings freely.
+ */
+export type SequenceMode = 'strict' | 'soft';
+
 export interface Settings {
-  dailyCadence: number; // Hours per day user works on tasks (default: 2)
-}
-
-// Calculated/derived fields for tasks
-export interface TaskCalculations {
-  taskId: string;
-  level: number; // Depth in hierarchy (0 = root, 1 = child, etc.)
-  isLeaf: boolean; // TRUE if task has no subtasks
-  totalHoursRemaining: number; // For parent tasks, sum of incomplete descendant hours
-  completionPercentage: number; // Hours completed / total hours (0-100)
-  expectedCompletionDate?: string; // Today + (hours remaining / daily cadence)
-  daysUntilDue?: number; // Due date - today (if applicable)
-  daysNeeded: number; // Hours remaining / daily cadence
-  slack?: number; // Days until due - days needed
-  latestStartDate?: number; // Days from today when task MUST begin to meet deadline (can be negative)
-  urgencyScore: number; // Final priority score for sorting
-  basePriority: number; // (Goal.Priority + Project.Priority) × 10
-  urgencyBoost: number; // Deadline-based boost
-}
-
-// Extended task with calculations for display
-export interface TaskWithCalculations extends Task {
-  calculations: TaskCalculations;
-  goal?: Goal;
-  project?: Project;
-  parent?: Task;
-  children?: TaskWithCalculations[];
-}
-
-// For the "Today's List" view
-export interface TodayListItem {
-  task: Task;
-  parentName?: string;
-  projectName: string;
-  goalName: string;
-  urgencyScore: number;
-  basePriority: number; // For secondary sort when latestStartDate is same
-  latestStartDate?: number; // Days from today when task MUST begin (undefined = no deadline)
-  cumulativeSlack?: number; // Slack based on total work of all sibling tasks with same deadline
-  statusIndicator: '🔴' | '🟡' | '🟢' | '⚪'; // at risk, tight, on track, no deadline
-  slack?: number;
-  expectedCompletion?: string;
+  dailyCadence: number; // Hours per day available for task work
+  priorityModel: PriorityModel;
+  sequenceMode: SequenceMode;
+  tightSlackDays: number; // Slack at or below this many days shows as "tight"
 }
 
 // Main application state
